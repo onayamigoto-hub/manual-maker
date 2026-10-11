@@ -147,9 +147,10 @@
           </ol>
           <div class="hero-acts">
             <button class="btn btn-yellow btn-xl" data-act="new">＋ 新しい手順書をつくる</button>
-            <button class="btn btn-black btn-xl" data-act="video">🎬 動画から下書きをつくる（AI）</button>
+            <label class="btn btn-black btn-xl">📂 下書きファイルを開く<input type="file" accept=".json,application/json" data-act="import" hidden></label>
+            ${C.aiEndpoint ? `<button class="btn btn-xl" data-act="video">🎬 動画から下書きをつくる（AI）</button>` : ""}
           </div>
-          <p class="hero-sub">作業の様子を撮った動画を選ぶと、AIが手順の下書きと写真を用意します。</p>
+          <p class="hero-sub">管理者から届いた下書きファイル（「〜_下書き.json」）は、「下書きファイルを開く」から開いて、続きを入力できます。</p>
         </div>
 
         <h2 class="list-ttl">つくりかけ・つくった手順書 <small>${list.length}件</small></h2>
@@ -178,7 +179,7 @@
           <b>保存について</b><br>
           入力した内容は、<b>この端末（スマホ・パソコン）の中</b>に自動で保存されます。別の端末で続きを入力したいときや、念のため控えを残したいときは「ファイルに保存」を押してください。そのファイルは下のボタンで読み込めます。
           <div class="note-acts">
-            <label class="btn btn-sm">📂 保存したファイルを読み込む<input type="file" accept=".json,application/json" data-act="import" hidden></label>
+            <label class="btn btn-sm">📂 保存したファイルを開く<input type="file" accept=".json,application/json" data-act="import" hidden></label>
           </div>
         </div>
       </section>`;
@@ -759,8 +760,8 @@
       }
       m.updatedAt = Date.now();
       await DB.put(m);
-      toast("読み込みました");
-      showHome();
+      toast("ファイルを開きました");
+      openManual(m.id);
     } catch (e) {
       toast("このファイルは読み込めませんでした。このアプリで保存した「〜_控え.json」を選んでください。", 4500);
     }
