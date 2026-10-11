@@ -51,7 +51,6 @@ window.ManualOutput = (function () {
     return `<div class="d-point"><div class="d-point-ttl">✔ Point</div>${items.map((t) => `<div class="d-li">・${esc(t)}</div>`).join("")}</div>`;
   }
   const headingHTML = (n, t) => `<div class="d-h"><div class="d-h-n">${n}</div><div class="d-h-t">${esc(t)}</div></div>`;
-  const arrow = (label) => `<div class="d-arrow">▼${label ? `<span>${label}</span>` : ""}</div>`;
 
   function cardHTML(s) {
     let img;
@@ -68,10 +67,101 @@ window.ManualOutput = (function () {
     return `<div class="d-card"><div class="d-card-n">${s.n}</div><div class="d-card-img">${img}</div><div class="d-card-body">${body}</div></div>`;
   }
 
+  // ---------- フローチャート（開始・終了＝丸／手順＝四角／確認（分岐）＝ひし形） ----------
+  const FF = "Yu Gothic, YuGothic, Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, Meiryo, sans-serif";
+  const FLOW_MAX_H = 880;
+  let mctx;
+  const textW = (t, font) => { mctx = mctx || document.createElement("canvas").getContext("2d"); mctx.font = font; return mctx.measureText(t).width; };
+  function wrap(text, font, maxW) {
+    const out = [];
+    let line = "";
+    for (const ch of [...String(text || "")]) {
+      if (line && textW(line + ch, font) > maxW) { out.push(line); line = ch; } else line += ch;
+    }
+    if (line) out.push(line);
+    return out;
+  }
+  function flowSVG(d) {
+    const { BLACK, YELLOW, CREAM } = HEX;
+    const W = 680, CX = 350, R = 32, GAP = 30;
+    const BOXW = 380, BX = CX - BOXW / 2, BADGE = 44, LOOPX = 70;
+    const fStep = `500 13.5px ${FF}`, fSmall = `500 12px ${FF}`;
+    const o = [];
+    const t = (x, y, str, size, opt = {}) => o.push(`<text x="${x}" y="${y}" font-family="${FF}" font-size="${size}" font-weight="${opt.w || 500}" fill="#${opt.c || BLACK}" text-anchor="${opt.a || "middle"}" dominant-baseline="central">${esc(str)}</text>`);
+    const head = (x, y, dir) => {
+      const p = dir === "down" ? `${x - 6},${y - 10} ${x + 6},${y - 10} ${x},${y}` : `${x - 10},${y - 6} ${x - 10},${y + 6} ${x},${y}`;
+      o.push(`<polygon points="${p}" fill="#${BLACK}"/>`);
+    };
+    const down = (y1, y2) => { o.push(`<line x1="${CX}" y1="${y1}" x2="${CX}" y2="${y2 - 8}" stroke="#${BLACK}" stroke-width="2"/>`); head(CX, y2, "down"); };
+    const label = (x, y, str) => {
+      const w = textW(str, `700 11px ${FF}`) + 12;
+      o.push(`<rect x="${x - w / 2}" y="${y - 9}" width="${w}" height="18" rx="3" fill="#fff" stroke="#${BLACK}" stroke-width="1.5"/>`);
+      t(x, y + 0.5, str, 11, { w: 700 });
+    };
+    const circle = (cy, str) => { o.push(`<circle cx="${CX}" cy="${cy}" r="${R}" fill="#${BLACK}"/>`); t(CX, cy, str, 14, { w: 700, c: "FFFFFF" }); };
+
+    let y = 2;
+    circle(y + R, "開始");
+    y += R * 2;
+    const mids = [];
+    d.steps.forEach((s) => {
+      down(y, y + GAP); y += GAP;
+      const lines = wrap(s.name, fStep, BOXW - BADGE - 28);
+      const h = Math.max(48, lines.length * 20 + 18);
+      o.push(`<rect x="${BX}" y="${y}" width="${BOXW}" height="${h}" rx="6" fill="#${CREAM}" stroke="#${BLACK}" stroke-width="2"/>`);
+      o.push(`<path d="M${BX + 6},${y} H${BX + BADGE} V${y + h} H${BX + 6} A6,6 0 0 1 ${BX},${y + h - 6} V${y + 6} A6,6 0 0 1 ${BX + 6},${y} Z" fill="#${BLACK}"/>`);
+      t(BX + BADGE / 2, y + h / 2, String(s.n), 18, { w: 700, c: "FFFFFF" });
+      lines.forEach((ln, k) => t(BX + BADGE + 14, y + h / 2 + (k - (lines.length - 1) / 2) * 20, ln, 13.5, { a: "start" }));
+      mids.push(y + h / 2);
+      y += h;
+    });
+    if (d.check.use) {
+      down(y, y + GAP); y += GAP;
+      const lines = wrap(d.check.text, fSmall, 150).slice(0, 6);
+      const ch = 20 + lines.length * 16;
+      const a = 130, b = Math.max(52, ch / 0.846 + 4), cy = y + b;
+      o.push(`<polygon points="${CX},${y} ${CX + a},${cy} ${CX},${cy + b} ${CX - a},${cy}" fill="#${YELLOW}" stroke="#${BLACK}" stroke-width="2" stroke-linejoin="round"/>`);
+      const top = cy - ch / 2;
+      t(CX, top + 10, "確認 OK？", 14, { w: 700 });
+      lines.forEach((ln, k) => t(CX, top + 20 + k * 16 + 8, ln, 12));
+      // NO：左へ出て、戻り先のステップへ
+      const ty = mids[d.check.back - 1] ?? mids[0];
+      o.push(`<path d="M${CX - a},${cy} H${LOOPX} V${ty} H${BX - 8}" fill="none" stroke="#${BLACK}" stroke-width="2"/>`);
+      head(BX, ty, "right");
+      label((LOOPX + CX - a) / 2, cy, `NO → STEP ${d.check.back}`);
+      y = cy + b;
+      down(y, y + GAP + 6);
+      label(CX + 30, y + (GAP + 6) / 2, "YES");
+      y += GAP + 6;
+    } else {
+      down(y, y + GAP); y += GAP;
+    }
+    circle(y + R, "終了");
+    y += R * 2 + 2;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}"><rect width="${W}" height="${y}" fill="#fff"/>${o.join("")}</svg>`;
+    return { svg, w: W, h: y, url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg) };
+  }
+  function svgToPng(f, scale = 2.5) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = Math.round(f.w * scale); c.height = Math.round(f.h * scale);
+        const x = c.getContext("2d");
+        x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+        x.drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob((b) => b.arrayBuffer().then((ab) => res(new Uint8Array(ab))), "image/png");
+      };
+      img.onerror = rej;
+      img.src = f.url;
+    });
+  }
+
   function blocks(d) {
     const b = [];
     const add = (html, opt = {}) => html && b.push({ html, gap: opt.gap ?? 14, breakBefore: !!opt.breakBefore });
     add(`<div class="d-pill">MANUAL TEMPLATE</div>
+      <img class="d-logo" src="logo.png" alt="">
       <div class="d-company">${esc(d.company)}</div>
       <div class="d-office">事業所：${esc(d.office)}</div>
       <div class="d-title">【 ${esc(d.title) || "　".repeat(18)} 】</div>`, { gap: 26 });
@@ -80,15 +170,8 @@ window.ManualOutput = (function () {
     add(pointHTML(d.points[0]));
 
     add(headingHTML(2, "ワークフロー（全体の流れ）"), { breakBefore: true, gap: 14 });
-    add(`<div class="d-flow"><div class="d-end">開 始</div></div>`, { gap: 0 });
-    d.steps.forEach((s) => add(`<div class="d-flow">${arrow()}<div class="d-step"><div class="d-step-n">${s.n}</div><div class="d-step-t">${esc(s.name)}</div></div></div>`, { gap: 0 }));
-    if (d.check.use) {
-      add(`<div class="d-flow">${arrow()}<div class="d-check"><div><b class="d-check-ttl">確認　OK？</b>${d.check.text ? `<span class="d-check-txt">　${esc(d.check.text)}</span>` : ""}</div>
-        <div class="d-check-sub">NO → STEP（${d.check.back}）へ戻る　／　YES → 次へ（終了）</div></div></div>`, { gap: 0 });
-      add(`<div class="d-flow">${arrow("YES")}<div class="d-end">終 了</div></div>`, { gap: 22 });
-    } else {
-      add(`<div class="d-flow">${arrow()}<div class="d-end">終 了</div></div>`, { gap: 22 });
-    }
+    const f = flowSVG(d), k = Math.min(1, FLOW_MAX_H / f.h);
+    add(`<div class="d-flowchart"><img src="${f.url}" alt="ワークフロー" width="${Math.round(f.w * k)}" height="${Math.round(f.h * k)}" style="width:${Math.round(f.w * k)}px;height:${Math.round(f.h * k)}px"></div>`, { gap: 22 });
     add(pointHTML(d.points[1]));
 
     add(headingHTML(3, "手順の詳細"), { breakBefore: true, gap: 18 });
@@ -146,6 +229,7 @@ window.ManualOutput = (function () {
     const {
       Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
       WidthType, BorderStyle, ShadingType, AlignmentType, ImageRun, PageBreak, VerticalAlign,
+      HorizontalPositionRelativeFrom, HorizontalPositionAlign, VerticalPositionRelativeFrom, TextWrappingType, TextWrappingSide,
     } = window.docx;
     const { BLACK, YELLOW, GRAY, CREAM, WHITE, MEDGRAY } = HEX;
     const FONT = "Yu Gothic";
@@ -201,46 +285,6 @@ window.ManualOutput = (function () {
       });
     }
 
-    const FLOW_W = 6200, BADGE_W = 800;
-    const thick = () => ({ top: line(BLACK, 12), bottom: line(BLACK, 12), left: line(BLACK, 12), right: line(BLACK, 12) });
-    function flowEnd(text) {
-      return new Table({
-        alignment: AlignmentType.CENTER, width: { size: 2200, type: WidthType.DXA }, columnWidths: [2200],
-        rows: [new TableRow({ children: [new TableCell({ width: { size: 2200, type: WidthType.DXA }, borders: thick(), shading: shade(BLACK), margins: { top: 90, bottom: 90 },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(text, { bold: true, color: WHITE, size: 22 })] })] })] })],
-      });
-    }
-    function flowArrow(label) {
-      const kids = [run("▼", { bold: true, size: 22 })];
-      if (label) kids.push(run(`  ${label}`, { bold: true, size: 18 }));
-      return new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 20, after: 20 }, keepNext: true, children: kids });
-    }
-    function flowStep(s) {
-      return new Table({
-        alignment: AlignmentType.CENTER, width: { size: FLOW_W, type: WidthType.DXA }, columnWidths: [BADGE_W, FLOW_W - BADGE_W],
-        rows: [new TableRow({ cantSplit: true, children: [
-          new TableCell({ width: { size: BADGE_W, type: WidthType.DXA }, verticalAlign: VerticalAlign.CENTER,
-            borders: { top: line(BLACK, 12), bottom: line(BLACK, 12), left: line(BLACK, 12), right: none() }, shading: shade(BLACK),
-            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(String(s.n), { bold: true, color: WHITE, size: 28 })] })] }),
-          new TableCell({ width: { size: FLOW_W - BADGE_W, type: WidthType.DXA }, verticalAlign: VerticalAlign.CENTER,
-            borders: { top: line(BLACK, 12), bottom: line(BLACK, 12), left: none(), right: line(BLACK, 12) }, shading: shade(CREAM), margins: { left: 200, right: 150, top: 110, bottom: 110 },
-            children: [new Paragraph({ children: [run(s.name)] })] }),
-        ] })],
-      });
-    }
-    function flowCheck() {
-      const first = [run("確認　OK？", { bold: true, size: 22 })];
-      if (d.check.text) first.push(run("　" + d.check.text, { size: 19 }));
-      return new Table({
-        alignment: AlignmentType.CENTER, width: { size: FLOW_W, type: WidthType.DXA }, columnWidths: [FLOW_W],
-        rows: [new TableRow({ cantSplit: true, children: [new TableCell({ width: { size: FLOW_W, type: WidthType.DXA }, borders: thick(), shading: shade(YELLOW), margins: { top: 100, bottom: 100, left: 150, right: 150 },
-          children: [
-            new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: first }),
-            new Paragraph({ alignment: AlignmentType.CENTER, children: [run(`NO → STEP（${d.check.back}）へ戻る　／　YES → 次へ（終了）`, { bold: true, size: 18 })] }),
-          ] })] })],
-      });
-    }
-
     function stepCard(s) {
       const imgW = 3000, bodyW = CW - 700 - imgW;
       let imgChildren;
@@ -279,7 +323,15 @@ window.ManualOutput = (function () {
 
     const c = [];
     c.push(new Paragraph({ children: [run("  MANUAL TEMPLATE  ", { bold: true, size: 18 })], shading: shade(YELLOW), spacing: { after: 120 } }));
-    c.push(new Paragraph({ spacing: { after: 40 }, children: [run(d.company, { bold: true, size: 22 })] }));
+    const logoKids = [];
+    try {
+      const lb = new Uint8Array(await (await fetch("logo.png")).arrayBuffer());
+      logoKids.push(new ImageRun({ type: "png", data: lb, transformation: { width: 64, height: 64 },
+        floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.MARGIN, align: HorizontalPositionAlign.RIGHT },
+          verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: 0 },
+          wrap: { type: TextWrappingType.SQUARE, side: TextWrappingSide.LEFT }, margins: { left: 114300 } } }));
+    } catch (e) { /* ロゴが読めないときは入れない */ }
+    c.push(new Paragraph({ spacing: { after: 40 }, children: [...logoKids, run(d.company, { bold: true, size: 22 })] }));
     c.push(new Paragraph({ spacing: { after: 80 }, children: [run("事業所：", { bold: true, size: 22 }), run(d.office, { bold: true, size: 22 })] }));
     c.push(new Paragraph({ spacing: { after: 300 }, children: [run(`【 ${d.title || "　".repeat(18)} 】`, { bold: true, size: 36 })] }));
 
@@ -291,11 +343,11 @@ window.ManualOutput = (function () {
 
     c.push(sectionHeading(2, "ワークフロー（全体の流れ）"));
     c.push(spacer());
-    c.push(flowEnd("開 始"));
-    d.steps.forEach((s) => { c.push(flowArrow()); c.push(flowStep(s)); });
-    c.push(flowArrow());
-    if (d.check.use) { c.push(flowCheck()); c.push(flowArrow("YES")); }
-    c.push(flowEnd("終 了"));
+    {
+      const f = flowSVG(d), png = await svgToPng(f);
+      const k = Math.min(640 / f.w, FLOW_MAX_H / f.h);
+      c.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ type: "png", data: png, transformation: { width: Math.round(f.w * k), height: Math.round(f.h * k) } })] }));
+    }
     if (d.points[1].length) { c.push(spacer(200)); c.push(pointBox(d.points[1])); }
     c.push(pageBreak());
 

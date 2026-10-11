@@ -281,7 +281,7 @@
         <button class="btn btn-add" data-act="add">＋ ステップを追加する</button>
         <div class="wf-arrow">▼</div>
         <div class="wf-check ${cur.check.use ? "" : "off"}">
-          <label class="switch"><input type="checkbox" data-check="use" ${cur.check.use ? "checked" : ""}><span>最後に「確認 OK？」の枠を入れる</span></label>
+          <label class="switch"><input type="checkbox" data-check="use" ${cur.check.use ? "checked" : ""}><span class="wf-check-ttl"><i class="diamond" aria-hidden="true"></i>最後に「確認 OK？」（分岐のひし形）を入れる</span></label>
           ${cur.check.use ? `
             <div class="field">
               <label for="f-check">確認すること</label>
