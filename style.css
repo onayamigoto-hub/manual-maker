@@ -215,7 +215,7 @@ input.num { width: 110px; text-align: center; }
 #render-area { position: absolute; left: -10000px; top: 0; width: 794px; }
 #render-area.capture { left: 0; z-index: -1; }
 .d-page { width: 794px; height: 1123px; padding: 57px; background: #fff; color: #1A1A1A; overflow: hidden; position: relative;
-  font-family: "Yu Gothic", "YuGothic", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif; font-size: 12.7px; line-height: 1.6; font-weight: 500; }
+  font-family: "Yu Gothic", "YuGothic", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif; font-size: 12.7px; line-height: 1.6; font-weight: 500;  text-spacing-trim: space-all; }
 .d-content { width: 680px; }
 .d-block { display: flow-root; }
 .d-pill { background: #F5C542; font-weight: 700; font-size: 12px; padding: 0 8px; margin-bottom: 8px; line-height: 1.6; }
