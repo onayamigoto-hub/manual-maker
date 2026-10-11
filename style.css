@@ -103,7 +103,8 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--b
 .choice input:checked + span::before { border: 7px solid var(--black); }
 .choice input:focus-visible + span { outline: 3px solid var(--yellow); }
 .inline-row { display: flex; align-items: center; gap: 10px; }
-.inline-row select { width: auto; flex: 1; max-width: 420px; }
+.inline-row select { width: auto; flex: 1 1 0; min-width: 0; max-width: 420px; text-overflow: ellipsis; }
+.inline-row > span { flex: none; }
 input.num { width: 110px; text-align: center; }
 
 .purpose { border: 1.5px solid var(--line); border-radius: var(--radius); padding: 14px 14px 0; margin-bottom: 18px; background: #FCFBF8; }
@@ -126,7 +127,12 @@ input.num { width: 110px; text-align: center; }
 .wf-step input:focus { box-shadow: inset 0 0 0 3px var(--yellow); }
 .wf-tools { display: flex; align-items: center; gap: 4px; padding: 0 6px; background: #fff; border-left: 1px solid var(--line); }
 .wf-tools .icon { width: 38px; height: 38px; }
-.wf-check { border: 2px solid var(--black); border-radius: 10px; background: var(--yellow); padding: 14px; }
+.wf-addbr { align-self: center; display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 14px; min-height: 40px; border: 1.5px dashed #999; border-radius: 10px; background: #fff; font-size: 14px; font-weight: 700; cursor: pointer; color: #444; }
+.wf-addbr:hover { background: var(--yellow-soft); border-color: var(--black); }
+.wf-addbr .diamond { width: 16px; height: 16px; }
+.wf-br-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wf-br-head .link { font-size: 14px; }
+.wf-check { 2px solid var(--black); border-radius: 10px; background: var(--yellow); padding: 14px; }
 .wf-check.off { background: #f3f2ee; border-style: dashed; }
 .wf-check .field { margin: 12px 0 0; }
 .wf-check .hint { color: #4a3d12; margin-top: 6px; }
@@ -247,5 +253,7 @@ input.num { width: 110px; text-align: center; }
 .d-row { margin-bottom: 6px; }
 .d-lbl { font-weight: 700; margin-bottom: 2px; }
 .d-lbl2 { margin-top: 6px; }
+.d-branch { margin-top: 7px; padding: 4px 8px; border: 1.5px solid #F5C542; background: #FFFBEA; }
+.d-branch span { font-size: 11.5px; font-weight: 700; }
 .d-meyasu { background: #F5C542; font-weight: 700; font-size: 12px; padding: 0 8px; margin-top: 9px; }
 .d-foot { position: absolute; bottom: 22px; left: 0; right: 0; text-align: center; font-size: 10px; color: #999; }

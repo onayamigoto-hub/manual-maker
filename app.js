@@ -43,7 +43,7 @@
     set(v) { try { localStorage.setItem("am-manual-pref", JSON.stringify({ ...pref.get(), ...v })); } catch (e) {} },
   };
 
-  const newStep = () => ({ id: uid(), name: "", heading: "", procedure: "", caution: "", minutes: "", photo: null, photoW: 0, photoH: 0 });
+  const newStep = () => ({ id: uid(), name: "", heading: "", procedure: "", caution: "", minutes: "", photo: null, photoW: 0, photoH: 0, branch: { use: false, text: "", backId: "" } });
   function newManual() {
     const p = pref.get();
     return {
@@ -51,7 +51,7 @@
       office: C.offices.includes(p.office) ? p.office : "", title: "",
       itemName: "", purposeUser: "", purposeStaff: "", author: p.author || "", checker1: "", checker2: "", point1: "",
       steps: [newStep(), newStep(), newStep()],
-      check: { use: true, text: "", backTo: 1 },
+      check: { use: true, text: "", backId: "" },
       point2: "", point3: "",
     };
   }
@@ -179,10 +179,13 @@
     renderEditor();
   }
   function migrate(m) {
-    m.check = m.check || { use: true, text: "", backTo: 1 };
+    m.check = m.check || { use: true, text: "", backId: "" };
     m.purposeUser = m.purposeUser || "";
     m.purposeStaff = m.purposeStaff || "";
     m.steps = (m.steps && m.steps.length ? m.steps : [newStep()]).map((s) => ({ ...newStep(), ...s }));
+    // 以前の形式（戻り先を番号で持っていた）からの読みかえ
+    if (!m.check.backId) m.check.backId = (m.steps[(Number(m.check.backTo) || 1) - 1] || m.steps[0]).id;
+    delete m.check.backTo;
     return m;
   }
 
@@ -261,10 +264,37 @@
       ${pointField("point1", "この手順書全体")}`;
   }
 
+  const stepLabel = (s, i) => `STEP ${i + 1}${s.name ? "（" + esc(s.name.slice(0, 14)) + "）" : ""}`;
+  // NO のときの行き先を選ぶ欄
+  function backSelect(attrs, backId, fallbackId) {
+    const sel = cur.steps.some((s) => s.id === backId) ? backId : fallbackId;
+    return `<select ${attrs}>${cur.steps.map((s, i) => `<option value="${s.id}" data-sid="${s.id}" ${s.id === sel ? "selected" : ""}>${stepLabel(s, i)}</option>`).join("")}</select>`;
+  }
+  function branchBox(s, i) {
+    const n = cur.steps.length;
+    const next = i + 1 < n ? `ステップ${i + 2}` : cur.check.use ? "最後の確認" : "終了";
+    return `
+      <div class="wf-arrow">▼</div>
+      <div class="wf-check wf-branch">
+        <div class="wf-br-head"><span class="wf-check-ttl"><i class="diamond" aria-hidden="true"></i>ステップ${i + 1}のあとの確認（分岐）</span>
+          <button class="link danger" data-act="br-rm" data-i="${i}">この確認を消す</button></div>
+        <div class="field">
+          <label for="br-${i}">確認すること</label>
+          <input id="br-${i}" type="text" data-br="text" data-i="${i}" value="${esc(s.branch.text)}" placeholder="例）利用者さんが居室にいらっしゃるか">
+        </div>
+        <div class="field inline">
+          <label for="brb-${i}">NO（できていない・ちがう）のときは</label>
+          <div class="inline-row">${backSelect(`id="brb-${i}" data-br="backId" data-i="${i}"`, s.branch.backId, s.id)}<span>へ</span></div>
+          <p class="hint">YES（OK）のときは、${next}へ進みます。</p>
+        </div>
+      </div>`;
+  }
+
   function pageFlow() {
     const n = cur.steps.length;
     return `
-      <p class="lead">作業を始めから終わりまで、<b>順番に</b>ステップに分けて書きます。<br>ここで書いた作業名は、次の「各ステップ」の見出しにもなります。</p>
+      <p class="lead">作業を始めから終わりまで、<b>順番に</b>ステップに分けて書きます。<br>ここで書いた作業名は、次の「各ステップ」の見出しにもなります。<br>
+      途中で「できているか」「どちらか」を確かめて流れが分かれるところには、<b>◆ 確認（分岐）</b>を入れられます。いくつでも入れられます。</p>
       <div class="wf">
         <div class="wf-end">開始</div>
         ${cur.steps.map((s, i) => `
@@ -277,7 +307,8 @@
               <button class="icon" data-act="down" data-i="${i}" ${i === n - 1 ? "disabled" : ""} aria-label="下へ移動" title="下へ">▼</button>
               <button class="icon danger" data-act="rm" data-i="${i}" ${n === 1 ? "disabled" : ""} aria-label="このステップを消す" title="消す">✕</button>
             </div>
-          </div>`).join("")}
+          </div>
+          ${s.branch.use ? branchBox(s, i) : i < n - 1 ? `<button class="wf-addbr" data-act="br-add" data-i="${i}"><i class="diamond" aria-hidden="true"></i>ここに確認（分岐）を入れる</button>` : ""}`).join("")}
         <button class="btn btn-add" data-act="add">＋ ステップを追加する</button>
         <div class="wf-arrow">▼</div>
         <div class="wf-check ${cur.check.use ? "" : "off"}">
@@ -289,12 +320,7 @@
             </div>
             <div class="field inline">
               <label for="f-back">NO（できていない）のときは</label>
-              <div class="inline-row">
-                <select id="f-back" data-check="backTo">
-                  ${cur.steps.map((s, i) => `<option value="${i + 1}" ${Number(cur.check.backTo) === i + 1 ? "selected" : ""}>STEP ${i + 1}${s.name ? "（" + esc(s.name.slice(0, 14)) + "）" : ""}</option>`).join("")}
-                </select>
-                <span>へ戻る</span>
-              </div>
+              <div class="inline-row">${backSelect(`id="f-back" data-check="backId"`, cur.check.backId, cur.steps[0].id)}<span>へ戻る</span></div>
               <p class="hint">YES（OK）のときは「終了」へ進みます。</p>
             </div>` : ""}
         </div>
@@ -376,6 +402,7 @@
     if (!cur.purposeUser.trim() && !cur.purposeStaff.trim()) w.push([1, "目的が入っていません"]);
     if (!cur.author.trim()) w.push([1, "作成者の名前が入っていません"]);
     cur.steps.forEach((s, i) => {
+      if (s.branch.use && !s.branch.text.trim()) w.push([2, `ステップ${i + 1}のあとの確認の内容が入っていません`]);
       if (!s.name.trim()) w.push([2, `ステップ${i + 1}の作業名が入っていません`]);
       else if (!s.procedure.trim()) w.push([3, `ステップ${i + 1}の作業手順が入っていません`]);
     });
@@ -463,9 +490,6 @@
     const el = scrollToNew ? document.getElementById(`card-${i}`) : document.querySelector(`[data-sf="name"][data-i="${i}"]`);
     if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); if (!scrollToNew) setTimeout(() => el.focus(), 300); }
   }
-  function clampBack() {
-    cur.check.backTo = Math.min(Math.max(1, Number(cur.check.backTo) || 1), cur.steps.length);
-  }
 
   // ---------- 操作の受け付け ----------
   document.addEventListener("click", async (e) => {
@@ -501,8 +525,17 @@
       case "rm": {
         const s = cur.steps[i];
         if (hasContent(s) && !confirm(`ステップ${i + 1}「${s.name || "作業名なし"}」を消します。\n各ステップで入力した手順や写真も消えます。よろしいですか？`)) break;
-        cur.steps.splice(i, 1); clampBack(); scheduleSave(); renderEditor(true); break;
+        cur.steps.splice(i, 1); scheduleSave(); renderEditor(true); break;
       }
+      case "br-add":
+        cur.steps[i].branch = { use: true, text: "", backId: cur.steps[i].id };
+        scheduleSave(); renderEditor(true);
+        setTimeout(() => document.getElementById(`br-${i}`)?.focus(), 50);
+        break;
+      case "br-rm":
+        if (cur.steps[i].branch.text.trim() && !confirm(`ステップ${i + 1}のあとの確認を消しますか？`)) break;
+        cur.steps[i].branch = { use: false, text: "", backId: "" };
+        scheduleSave(); renderEditor(true); break;
       case "photo-rm":
         if (confirm(`ステップ${i + 1}の写真を消しますか？`)) { Object.assign(cur.steps[i], { photo: null, photoW: 0, photoH: 0 }); await saveNow(); renderEditor(true); }
         break;
@@ -539,12 +572,14 @@
       cur.steps[i][t.dataset.sf] = t.value;
       if (t.dataset.sf === "procedure") document.querySelector(`.chip[href="#card-${i}"]`)?.classList.toggle("ok", !!t.value.trim());
       if (t.dataset.sf === "name") {
-        const opt = document.querySelector(`#f-back option[value="${i + 1}"]`);
-        if (opt) opt.textContent = `STEP ${i + 1}${t.value ? "（" + t.value.slice(0, 14) + "）" : ""}`;
+        const id = cur.steps[i].id;
+        document.querySelectorAll(`option[data-sid="${id}"]`).forEach((o) => { o.textContent = `STEP ${i + 1}${t.value ? "（" + t.value.slice(0, 14) + "）" : ""}`; });
       }
     } else if (t.dataset.check) {
       if (t.dataset.check === "use") { cur.check.use = t.checked; scheduleSave(); renderEditor(true); return; }
-      cur.check[t.dataset.check] = t.dataset.check === "backTo" ? Number(t.value) : t.value;
+      cur.check[t.dataset.check] = t.value;
+    } else if (t.dataset.br) {
+      cur.steps[Number(t.dataset.i)].branch[t.dataset.br] = t.value;
     } else return;
     if (t.tagName === "TEXTAREA") autoGrow(t);
     scheduleSave();
@@ -553,7 +588,8 @@
   document.addEventListener("change", async (e) => {
     const t = e.target;
     if (t.dataset.file !== undefined && t.files && t.files[0]) { await setPhoto(Number(t.dataset.file), t.files[0]); t.value = ""; }
-    else if (t.dataset.check === "backTo") { cur.check.backTo = Number(t.value); scheduleSave(); }
+    else if (t.dataset.check === "backId") { cur.check.backId = t.value; scheduleSave(); }
+    else if (t.dataset.br === "backId") { cur.steps[Number(t.dataset.i)].branch.backId = t.value; scheduleSave(); }
     else if (t.dataset.act === "import" && t.files && t.files[0]) { importFile(t.files[0]); t.value = ""; }
   });
 

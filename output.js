@@ -32,8 +32,14 @@ window.ManualOutput = (function () {
       minutes: String(s.minutes ?? "").trim(),
       photo: s.photo || null,
       pw: s.photoW, ph: s.photoH,
+      branch: null,
     }));
-    const back = Math.min(Math.max(1, Number(m.check.backTo) || 1), Math.max(1, steps.length));
+    // 戻り先（ステップのID）→ ステップ番号。見つからなければ fallback
+    const numOf = (id, fallback) => { const k = m.steps.findIndex((x) => x.id === id); return k >= 0 ? k + 1 : fallback; };
+    m.steps.forEach((s, i) => {
+      if (s.branch && s.branch.use) steps[i].branch = { text: (s.branch.text || "").trim(), back: numOf(s.branch.backId, i + 1) };
+    });
+    const back = numOf(m.check.backId, Math.min(Math.max(1, Number(m.check.backTo) || 1), Math.max(1, steps.length)));
     return {
       company: C.company,
       office: m.office || "",
@@ -63,20 +69,23 @@ window.ManualOutput = (function () {
     let body = `<div class="d-row"><b>項目：</b>${esc(s.heading)}</div>`;
     if (s.proc.length) body += `<div class="d-lbl">作業手順：</div>${s.proc.map((t) => `<div class="d-li">・${esc(t)}</div>`).join("")}`;
     if (s.caution.length) body += `<div class="d-lbl d-lbl2">注意点・留意事項：</div>${s.caution.map((t) => `<div class="d-li">・${esc(t)}</div>`).join("")}`;
+    if (s.branch) body += `<div class="d-branch"><b>◆ 確認：</b>${esc(s.branch.text) || "OK？"}<br><span>YES → 次へ ／ NO → STEP ${s.branch.back} へ</span></div>`;
     if (s.minutes) body += `<div class="d-meyasu">【目安】 ${esc(s.minutes)}分</div>`;
     return `<div class="d-card"><div class="d-card-n">${s.n}</div><div class="d-card-img">${img}</div><div class="d-card-body">${body}</div></div>`;
   }
 
   // ---------- フローチャート（開始・終了＝丸／手順＝四角／確認（分岐）＝ひし形） ----------
   const FF = "Yu Gothic, YuGothic, Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, Meiryo, sans-serif";
-  const FLOW_MAX_H = 880;
+  const FLOW_FIRST_MAX = 920, FLOW_NEXT_MAX = 980; // 1枚目は見出しのぶん低く
   let mctx;
   const textW = (t, font) => { mctx = mctx || document.createElement("canvas").getContext("2d"); mctx.font = font; return mctx.measureText(t).width; };
+  const NO_HEAD = "、。，．・：；？！）」』】〕ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ";
   function wrap(text, font, maxW) {
     const out = [];
     let line = "";
     for (const ch of [...String(text || "")]) {
-      if (line && textW(line + ch, font) > maxW) { out.push(line); line = ch; } else line += ch;
+      // 行の頭に来ないほうがよい文字（、。っ ー など）は前の行に残す
+      if (line && textW(line + ch, font) > maxW && !NO_HEAD.includes(ch)) { out.push(line); line = ch; } else line += ch;
     }
     if (line) out.push(line);
     return out;
@@ -100,12 +109,33 @@ window.ManualOutput = (function () {
     };
     const circle = (cy, str) => { o.push(`<circle cx="${CX}" cy="${cy}" r="${R}" fill="#${BLACK}"/>`); t(CX, cy, str, 14, { w: 700, c: "FFFFFF" }); };
 
-    let y = 2;
+    // 部品は上から順に並べる。各部品は自分の上の矢印を描く（ひし形の直後は YES の矢印がその代わり）
+    let y = 2, afterDiamond = false;
+    const cuts = []; // ページをまたぐときに切ってよい位置（ステップ間の矢印のまん中）
+    const incoming = () => { if (!afterDiamond) { cuts.push(y + GAP / 2); down(y, y + GAP); y += GAP; } afterDiamond = false; };
+    const loops = [];
+    const diamond = (text, back) => {
+      incoming();
+      const lines = wrap(text, fSmall, 150).slice(0, 6);
+      const ch = 20 + lines.length * 16;
+      const a = 125, b = Math.max(48, ch / 0.846 + 4), cy = y + b;
+      o.push(`<polygon points="${CX},${y} ${CX + a},${cy} ${CX},${cy + b} ${CX - a},${cy}" fill="#${YELLOW}" stroke="#${BLACK}" stroke-width="2" stroke-linejoin="round"/>`);
+      const top = cy - ch / 2;
+      t(CX, top + 10, "確認 OK？", 14, { w: 700 });
+      lines.forEach((ln, k) => t(CX, top + 20 + k * 16 + 8, ln, 12));
+      loops.push({ x: CX - a, y: cy, back });
+      y = cy + b;
+      down(y, y + GAP + 6);
+      label(CX + 30, y + (GAP + 6) / 2, "YES");
+      y += GAP + 6;
+      afterDiamond = true;
+    };
+
     circle(y + R, "開始");
     y += R * 2;
     const mids = [];
     d.steps.forEach((s) => {
-      down(y, y + GAP); y += GAP;
+      incoming();
       const lines = wrap(s.name, fStep, BOXW - BADGE - 28);
       const h = Math.max(48, lines.length * 20 + 18);
       o.push(`<rect x="${BX}" y="${y}" width="${BOXW}" height="${h}" rx="6" fill="#${CREAM}" stroke="#${BLACK}" stroke-width="2"/>`);
@@ -114,32 +144,43 @@ window.ManualOutput = (function () {
       lines.forEach((ln, k) => t(BX + BADGE + 14, y + h / 2 + (k - (lines.length - 1) / 2) * 20, ln, 13.5, { a: "start" }));
       mids.push(y + h / 2);
       y += h;
+      if (s.branch) diamond(s.branch.text, s.branch.back);
     });
-    if (d.check.use) {
-      down(y, y + GAP); y += GAP;
-      const lines = wrap(d.check.text, fSmall, 150).slice(0, 6);
-      const ch = 20 + lines.length * 16;
-      const a = 130, b = Math.max(52, ch / 0.846 + 4), cy = y + b;
-      o.push(`<polygon points="${CX},${y} ${CX + a},${cy} ${CX},${cy + b} ${CX - a},${cy}" fill="#${YELLOW}" stroke="#${BLACK}" stroke-width="2" stroke-linejoin="round"/>`);
-      const top = cy - ch / 2;
-      t(CX, top + 10, "確認 OK？", 14, { w: 700 });
-      lines.forEach((ln, k) => t(CX, top + 20 + k * 16 + 8, ln, 12));
-      // NO：左へ出て、戻り先のステップへ
-      const ty = mids[d.check.back - 1] ?? mids[0];
-      o.push(`<path d="M${CX - a},${cy} H${LOOPX} V${ty} H${BX - 8}" fill="none" stroke="#${BLACK}" stroke-width="2"/>`);
-      head(BX, ty, "right");
-      label((LOOPX + CX - a) / 2, cy, `NO → STEP ${d.check.back}`);
-      y = cy + b;
-      down(y, y + GAP + 6);
-      label(CX + 30, y + (GAP + 6) / 2, "YES");
-      y += GAP + 6;
-    } else {
-      down(y, y + GAP); y += GAP;
-    }
+    if (d.check.use) diamond(d.check.text, d.check.back);
+    incoming();
     circle(y + R, "終了");
     y += R * 2 + 2;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}"><rect width="${W}" height="${y}" fill="#fff"/>${o.join("")}</svg>`;
-    return { svg, w: W, h: y, url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg) };
+
+    // NO の戻り線：長い線ほど外側（左）を通して、線どうしが重なりにくくする
+    loops.forEach((L) => { L.ty = mids[L.back - 1] ?? mids[0]; L.span = Math.abs(L.y - L.ty); });
+    [...loops].sort((p, q) => p.span - q.span).forEach((L, k) => { L.lane = Math.max(14, LOOPX - k * 14); });
+    loops.forEach((L) => {
+      o.push(`<path d="M${L.x},${L.y} H${L.lane} V${L.ty} H${BX - 8}" fill="none" stroke="#${BLACK}" stroke-width="2"/>`);
+      head(BX, L.ty, "right");
+      label(L.x - 48, L.y, `NO → STEP ${L.back}`);
+    });
+    return { w: W, h: y, cx: CX, body: o.join(""), cuts };
+  }
+  // 図が長いときは、1ページに入る高さで区切って、次のページへ続ける（文字を小さくしない）
+  function flowSlices(d) {
+    const f = flowSVG(d);
+    const ranges = [];
+    let start = 0;
+    const max = () => (ranges.length ? FLOW_NEXT_MAX : FLOW_FIRST_MAX);
+    while (f.h - start > max()) {
+      const ok = f.cuts.filter((c) => c > start + 120 && c - start <= max());
+      const c = ok.length ? ok[ok.length - 1] : start + max();
+      ranges.push([start, c]);
+      start = c;
+    }
+    ranges.push([start, f.h]);
+    const note = (x, y, str) => `<text x="${x}" y="${y}" font-family="${FF}" font-size="11" font-weight="700" fill="#6B6B6B" dominant-baseline="central">${str}</text>`;
+    return ranges.map(([a, b], i) => {
+      const h = Math.ceil(b - a);
+      const extra = (i > 0 ? note(f.cx + 12, a + 8, "前のページから続き") : "") + (i < ranges.length - 1 ? note(f.cx + 12, b - 8, "次のページへ続く ▼") : "");
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f.w}" height="${h}" viewBox="0 ${a} ${f.w} ${h}"><rect x="0" y="${a}" width="${f.w}" height="${h}" fill="#fff"/>${f.body}${extra}</svg>`;
+      return { svg, w: f.w, h, url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg) };
+    });
   }
   function svgToPng(f, scale = 2.5) {
     return new Promise((res, rej) => {
@@ -170,8 +211,8 @@ window.ManualOutput = (function () {
     add(pointHTML(d.points[0]));
 
     add(headingHTML(2, "ワークフロー（全体の流れ）"), { breakBefore: true, gap: 14 });
-    const f = flowSVG(d), k = Math.min(1, FLOW_MAX_H / f.h);
-    add(`<div class="d-flowchart"><img src="${f.url}" alt="ワークフロー" width="${Math.round(f.w * k)}" height="${Math.round(f.h * k)}" style="width:${Math.round(f.w * k)}px;height:${Math.round(f.h * k)}px"></div>`, { gap: 22 });
+    const sl = flowSlices(d);
+    sl.forEach((f, i) => add(`<div class="d-flowchart"><img src="${f.url}" alt="ワークフロー" width="${f.w}" height="${f.h}" style="width:${f.w}px;height:${f.h}px"></div>`, { gap: i === sl.length - 1 ? 22 : 0 }));
     add(pointHTML(d.points[1]));
 
     add(headingHTML(3, "手順の詳細"), { breakBefore: true, gap: 18 });
@@ -307,6 +348,10 @@ window.ManualOutput = (function () {
         body.push(new Paragraph({ spacing: { before: 100, after: 60 }, children: [run("注意点・留意事項：", { bold: true })] }));
         s.caution.forEach((t) => body.push(bullet(t)));
       }
+      if (s.branch) {
+        body.push(new Paragraph({ spacing: { before: 100, after: 0 }, children: [run("◆ 確認：", { bold: true }), run(s.branch.text || "OK？")] }));
+        body.push(new Paragraph({ spacing: { after: 0 }, children: [run(`YES → 次へ ／ NO → STEP ${s.branch.back} へ`, { size: 17, bold: true })] }));
+      }
       if (s.minutes) body.push(new Paragraph({ spacing: { before: 140 }, shading: shade(YELLOW), children: [run(`  【目安】 ${s.minutes}分  `, { bold: true, size: 18 })] }));
       return new Table({
         width: { size: CW, type: WidthType.DXA }, columnWidths: [700, imgW, bodyW],
@@ -344,9 +389,11 @@ window.ManualOutput = (function () {
     c.push(sectionHeading(2, "ワークフロー（全体の流れ）"));
     c.push(spacer());
     {
-      const f = flowSVG(d), png = await svgToPng(f);
-      const k = Math.min(640 / f.w, FLOW_MAX_H / f.h);
-      c.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ type: "png", data: png, transformation: { width: Math.round(f.w * k), height: Math.round(f.h * k) } })] }));
+      const k = 640 / 680;
+      for (const f of flowSlices(d)) {
+        const png = await svgToPng(f);
+        c.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ type: "png", data: png, transformation: { width: Math.round(f.w * k), height: Math.round(f.h * k) } })] }));
+      }
     }
     if (d.points[1].length) { c.push(spacer(200)); c.push(pointBox(d.points[1])); }
     c.push(pageBreak());
