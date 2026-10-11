@@ -11,6 +11,8 @@ window.ManualOutput = (function () {
   // A4（96dpi）と余白
   const PAGE_W = 794, PAGE_H = 1123, PAGE_PAD = 57;
   const CONTENT_H = PAGE_H - PAGE_PAD * 2;
+  // ページ下に残す余裕（Wordで開いたときの行の高さの違いも見込んで、多めにとる）
+  const SAFE_H = CONTENT_H - 40;
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   // 改行ごとに1項目。行頭の「・」「-」などは取り除く（出力時に「・」を付けるため）
@@ -76,7 +78,7 @@ window.ManualOutput = (function () {
 
   // ---------- フローチャート（開始・終了＝丸／手順＝四角／確認（分岐）＝ひし形） ----------
   const FF = "Yu Gothic, YuGothic, Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, Meiryo, sans-serif";
-  const FLOW_FIRST_MAX = 920, FLOW_NEXT_MAX = 980; // 1枚目は見出しのぶん低く
+  const FLOW_FIRST_MAX = 860, FLOW_NEXT_MAX = 920; // 1枚目は見出しのぶん低く
   let mctx;
   const textW = (t, font) => { mctx = mctx || document.createElement("canvas").getContext("2d"); mctx.font = font; return mctx.measureText(t).width; };
   const NO_HEAD = "、。，．・：；？！）」』】〕ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ";
@@ -249,8 +251,23 @@ window.ManualOutput = (function () {
       pages.push(p);
       cur = p.firstChild; used = 0;
     };
+    // 枠（表・図・カード・Point）は途中で切らない。入らなければ丸ごと次のページへ
     els.forEach((x) => {
-      if (!cur || (x.breakBefore && used > 0) || (used > 0 && used + x.h > CONTENT_H)) newPage();
+      if (!cur || (x.breakBefore && used > 0) || (used > 0 && used + x.h > SAFE_H)) newPage();
+      if (x.h > SAFE_H) {
+        // 1ページより長い枠（とても長いカードなど）は、切れないように少し縮めて1ページに収める
+        const k = SAFE_H / x.h;
+        const box = document.createElement("div");
+        box.style.height = Math.floor(x.h * k) + "px";
+        box.style.overflow = "hidden";
+        x.el.style.width = "680px";
+        x.el.style.transform = `scale(${k})`;
+        x.el.style.transformOrigin = "top left";
+        box.appendChild(x.el);
+        cur.appendChild(box);
+        used += x.h * k;
+        return;
+      }
       cur.appendChild(x.el);
       used += x.h;
     });
@@ -282,7 +299,7 @@ window.ManualOutput = (function () {
     const NONE = { top: none(), bottom: none(), left: none(), right: none() };
     const shade = (fill) => ({ type: ShadingType.CLEAR, color: "auto", fill });
     const run = (text, o = {}) => new TextRun({ text, font: FONT, size: 19, color: BLACK, ...o });
-    const spacer = (after = 150) => new Paragraph({ children: [], spacing: { after } });
+    const spacer = (after = 150) => new Paragraph({ children: [], spacing: { after }, keepNext: true });
     const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
     const bullet = (t, after = 30) => new Paragraph({ spacing: { after }, children: [run("・" + t)] });
 
@@ -291,9 +308,9 @@ window.ManualOutput = (function () {
         width: { size: CW, type: WidthType.DXA }, columnWidths: [700, CW - 700],
         rows: [new TableRow({ children: [
           new TableCell({ width: { size: 700, type: WidthType.DXA }, borders: NONE, verticalAlign: VerticalAlign.CENTER, shading: shade(BLACK),
-            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(String(num), { bold: true, color: WHITE, size: 28 })] })] }),
+            children: [new Paragraph({ keepNext: true, alignment: AlignmentType.CENTER, children: [run(String(num), { bold: true, color: WHITE, size: 28 })] })] }),
           new TableCell({ width: { size: CW - 700, type: WidthType.DXA }, borders: NONE, verticalAlign: VerticalAlign.CENTER, shading: shade(GRAY), margins: { left: 200, top: 80, bottom: 80 },
-            children: [new Paragraph({ children: [run(title, { bold: true, size: 26 })] })] }),
+            children: [new Paragraph({ keepNext: true, children: [run(title, { bold: true, size: 26 })] })] }),
         ] })],
       });
     }
@@ -302,12 +319,13 @@ window.ManualOutput = (function () {
       const lw = 2100, vw = CW - lw;
       return new Table({
         width: { size: CW, type: WidthType.DXA }, columnWidths: [lw, vw],
-        rows: d.info.map(([l, v]) => new TableRow({ children: [
+        // 行を途中で切らず、表全体を同じページにまとめる（最後の行以外は「次と一緒に」）
+        rows: d.info.map(([l, v], r) => { const kn = r < d.info.length - 1; return new TableRow({ cantSplit: true, children: [
           new TableCell({ width: { size: lw, type: WidthType.DXA }, borders: ALL, shading: shade(CREAM), verticalAlign: VerticalAlign.CENTER, margins: { left: 100, right: 100, top: 60, bottom: 60 },
-            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(l, { bold: true })] })] }),
+            children: [new Paragraph({ keepNext: kn, alignment: AlignmentType.CENTER, children: [run(l, { bold: true })] })] }),
           new TableCell({ width: { size: vw, type: WidthType.DXA }, borders: ALL, verticalAlign: VerticalAlign.CENTER, margins: { left: 150, right: 100, top: 60, bottom: 60 },
-            children: v.split(/\r?\n/).map((t) => new Paragraph({ children: [run(t)] })) }),
-        ] })),
+            children: v.split(/\r?\n/).map((t) => new Paragraph({ keepNext: kn, children: [run(t)] })) }),
+        ] }); }),
       });
     }
 
