@@ -145,7 +145,11 @@
           <ol class="flow-guide">
             ${PAGES.map((p, i) => `<li><span>${i + 1}</span>${p.short}</li>`).join("")}
           </ol>
-          <button class="btn btn-yellow btn-xl" data-act="new">＋ 新しい手順書をつくる</button>
+          <div class="hero-acts">
+            <button class="btn btn-yellow btn-xl" data-act="new">＋ 新しい手順書をつくる</button>
+            <button class="btn btn-black btn-xl" data-act="video">🎬 動画から下書きをつくる（AI）</button>
+          </div>
+          <p class="hero-sub">作業の様子を撮った動画を選ぶと、AIが手順の下書きと写真を用意します。</p>
         </div>
 
         <h2 class="list-ttl">つくりかけ・つくった手順書 <small>${list.length}件</small></h2>
@@ -233,6 +237,7 @@
         <nav class="tabs" aria-label="入力の順番">
           ${PAGES.map((p, i) => `<button class="tab ${i === page ? "on" : ""} ${i < page ? "done" : ""}" data-act="go" data-page="${i}"><span class="tab-n">${i + 1}</span><span class="tab-t">${p.short}</span></button>`).join("")}
         </nav>
+        ${aiBanner()}
         <div class="page">
           <h2 class="page-ttl"><span>${page + 1}</span>${PAGES[page].title}</h2>
           ${P()}
@@ -579,6 +584,10 @@
     const act = b.dataset.act, i = Number(b.dataset.i);
     switch (act) {
       case "new": cur = newManual(); page = 0; await saveNow(); renderEditor(); break;
+      case "video": showVideo(); break;
+      case "vd-run": runVideoDraft(); break;
+      case "vd-reset": vd.file = null; showVideo(); break;
+      case "ai-ok": if (cur && cur.aiDraft) { cur.aiDraft.dismissed = true; await saveNow(); renderEditor(true); } break;
       case "open": openManual(b.dataset.id); break;
       case "dup": {
         const m = await DB.get(b.dataset.id);
@@ -791,6 +800,245 @@
       busy(false);
       if (page === 4) renderPreview();
     }
+  }
+
+  // =============================================================
+  // 動画から下書きをつくる（AI）
+  //   1. 動画から一定の間隔で場面（写真）を取り出す（端末の中で行う）
+  //   2. 小さめの場面だけを中継プログラム経由で AI に送る（動画そのものは送らない）
+  //   3. 返ってきた下書きと、大きめの場面写真で手順書をつくる
+  // =============================================================
+  const vd = { file: null, url: null, duration: 0 };
+  const AI_PASS_KEY = "am-ai-pass";
+  const getPass = () => { try { return localStorage.getItem(AI_PASS_KEY) || ""; } catch (e) { return ""; } };
+  const setPass = (v) => { try { localStorage.setItem(AI_PASS_KEY, v); } catch (e) {} };
+
+  function showVideo() {
+    cur = null;
+    const p = pref.get();
+    const ready = !!C.aiEndpoint;
+    $app.innerHTML = `
+      <section class="vd">
+        <button class="link" data-act="home">← 一覧にもどる</button>
+        <div class="page">
+          <h2 class="page-ttl"><span>🎬</span>動画から下書きをつくる</h2>
+          <ol class="vd-flow">
+            <li><b>動画を選ぶ</b>（その場で撮ってもOK）</li>
+            <li><b>AIが場面を見て、手順の下書きを作る</b>（1〜3分かかります）</li>
+            <li><b>内容と写真を確認して、直す</b></li>
+          </ol>
+          ${ready ? "" : `<div class="warn"><b>まだ使えません</b>：AIとつなぐ設定が終わっていません。管理者に連絡してください。</div>`}
+          <div class="privacy">⚠ <b>個人情報の注意</b><br>
+            ・利用者さんの<b>顔・名前</b>、名札や書類が映らないように撮った動画を使ってください。<br>
+            ・動画から取り出した<b>場面（写真）だけ</b>がAI（Anthropic社のClaude）に送られます。動画そのものや音声は送りません。</div>
+          <div class="tips"><b>うまく作るコツ</b>：スマホは<b>横向き</b>で、<b>手元</b>が大きく映るように撮る／長さは<b>5分くらいまで</b>／1つの作業を始めから終わりまで撮る</div>
+
+          <div class="field">
+            <label for="vd-office">事業所</label>
+            <select id="vd-office"><option value="">（あとで選ぶ）</option>${C.offices.map((o) => `<option ${p.office === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
+          </div>
+
+          <div class="field">
+            <label>動画 <em class="req">必須</em></label>
+            ${vd.file ? `
+              <video class="vd-video" src="${vd.url}" controls playsinline muted></video>
+              <p class="hint">${esc(vd.file.name)}（${fmtDur(vd.duration)}）</p>
+              <button class="btn btn-sm btn-ghost" data-act="vd-reset">別の動画にする</button>` : `
+              <div class="photo-btns row">
+                ${isTouch ? `<label class="btn btn-black">📹 動画を撮る<input type="file" accept="video/*" capture="environment" data-vfile hidden></label>` : ""}
+                <label class="btn ${isTouch ? "" : "btn-black"}">📁 ${isTouch ? "アルバムから動画を選ぶ" : "動画ファイルを選ぶ"}<input type="file" accept="video/*" data-vfile hidden></label>
+              </div>`}
+          </div>
+
+          <div class="field">
+            <label for="vd-note">補足メモ <small>（なくてもOK）</small></label>
+            <p class="hint">何の作業か、動画の中で話していた説明、気をつけていることなどを書くと、下書きがより正確になります。</p>
+            <textarea id="vd-note" rows="3" placeholder="例）デイサービスで3時のおやつに出すコーヒーの準備。好み表を見て、ミルクと砂糖を入れ分ける。"></textarea>
+          </div>
+
+          ${ready && !getPass() ? `
+          <div class="field">
+            <label for="vd-pass">合言葉 <em class="req">必須</em></label>
+            <p class="hint">はじめて使うときだけ入力します。合言葉は管理者に聞いてください。</p>
+            <input id="vd-pass" type="password" autocomplete="off">
+          </div>` : ""}
+
+          <button class="btn btn-xl btn-yellow vd-go" data-act="vd-run" ${ready && vd.file ? "" : "disabled"}>✨ AIで下書きをつくる</button>
+          <div id="vd-progress" class="vd-progress" hidden></div>
+        </div>
+      </section>`;
+    window.scrollTo(0, 0);
+  }
+  const fmtDur = (s) => `${Math.floor(s / 60)}分${String(Math.round(s % 60)).padStart(2, "0")}秒`;
+
+  document.addEventListener("change", async (e) => {
+    const t = e.target;
+    if (!t.hasAttribute || !t.hasAttribute("data-vfile") || !t.files || !t.files[0]) return;
+    const f = t.files[0];
+    if (vd.url) URL.revokeObjectURL(vd.url);
+    vd.file = f; vd.url = URL.createObjectURL(f);
+    try { vd.duration = await videoDuration(vd.url); } catch (err) { vd.duration = 0; }
+    if (!vd.duration) { toast("この動画は読み込めませんでした。別の動画でお試しください。", 4000); vd.file = null; }
+    else if (vd.duration > 10 * 60) toast("10分をこえる長い動画です。場面がとびとびになるので、短く分けて撮るのがおすすめです。", 5000);
+    showVideo();
+  });
+
+  function videoDuration(url) {
+    return new Promise((res, rej) => {
+      const v = document.createElement("video");
+      v.preload = "metadata"; v.muted = true; v.playsInline = true;
+      v.onloadedmetadata = () => res(isFinite(v.duration) ? v.duration : 0);
+      v.onerror = rej;
+      v.src = url;
+    });
+  }
+
+  const once = (el, ev, ms = 10000) => new Promise((res, rej) => {
+    const tm = setTimeout(() => { el.removeEventListener(ev, h); rej(new Error("timeout")); }, ms);
+    const h = () => { clearTimeout(tm); el.removeEventListener(ev, h); res(); };
+    el.addEventListener(ev, h);
+  });
+
+  // 動画から場面を取り出す（AI用の小さい写真と、手順書用の大きい写真）
+  async function extractFrames(url, duration, onStep) {
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+    v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px";
+    document.body.appendChild(v);
+    try {
+      await once(v, "loadeddata", 20000);
+      try { await v.play(); v.pause(); } catch (e) { /* 自動再生できない端末でも続ける */ }
+      const n = Math.max(8, Math.min(30, Math.round(duration / 4)));
+      const W = v.videoWidth, H = v.videoHeight;
+      const cv = document.createElement("canvas"), ctx = cv.getContext("2d");
+      const shot = (max, q) => {
+        const k = Math.min(1, max / Math.max(W, H));
+        cv.width = Math.round(W * k); cv.height = Math.round(H * k);
+        ctx.drawImage(v, 0, 0, cv.width, cv.height);
+        return cv.toDataURL("image/jpeg", q);
+      };
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const t = Math.min(duration - 0.1, (i + 0.5) * duration / n);
+        v.currentTime = t;
+        try { await once(v, "seeked", 8000); } catch (e) { continue; }
+        out.push({ t, ai: shot(768, 0.72).split(",")[1], photo: shot(1280, 0.85), w: W, h: H });
+        onStep(i + 1, n);
+      }
+      return out;
+    } finally { v.remove(); }
+  }
+
+  // 縦長の写真は、作業の中心のあたりを横長（4:3）に切り出して、手順書の枠で見やすくする
+  function cropPhoto(dataUrl, fx, fy) {
+    return new Promise((res) => {
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        let sx = 0, sy = 0, sw = w, sh = h;
+        if (w / h < 4 / 3) { sh = Math.round(w * 3 / 4); sy = Math.round(Math.min(h - sh, Math.max(0, (fy ?? 0.5) * h - sh / 2))); }
+        else if (w / h > 2) { sw = Math.round(h * 2); sx = Math.round(Math.min(w - sw, Math.max(0, (fx ?? 0.5) * w - sw / 2))); }
+        const cv = document.createElement("canvas");
+        cv.width = sw; cv.height = sh;
+        cv.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        res({ data: cv.toDataURL("image/jpeg", 0.85), w: sw, h: sh });
+      };
+      img.onerror = () => res(null);
+      img.src = dataUrl;
+    });
+  }
+
+  function vdProgress(html) {
+    const el = document.getElementById("vd-progress");
+    if (el) { el.hidden = false; el.innerHTML = html; }
+  }
+
+  async function runVideoDraft() {
+    if (!vd.file || !C.aiEndpoint) return;
+    const passIn = document.getElementById("vd-pass");
+    if (passIn) { if (!passIn.value.trim()) { toast("合言葉を入力してください"); passIn.focus(); return; } setPass(passIn.value.trim()); }
+    const office = document.getElementById("vd-office").value;
+    const note = document.getElementById("vd-note").value;
+    if (office) pref.set({ office });
+    document.querySelector(".vd-go").disabled = true;
+    try {
+      vdProgress(`<div class="spinner"></div><p>動画から場面を取り出しています…</p>`);
+      const frames = await extractFrames(vd.url, vd.duration, (i, n) => vdProgress(`<div class="spinner"></div><p>動画から場面を取り出しています… <b>${i} / ${n}</b></p>`));
+      if (frames.length < 3) throw new Error("frames");
+      vdProgress(`<div class="spinner"></div><p><b>AIが場面を見て、手順をまとめています。</b><br>1〜3分かかります。画面を閉じずにお待ちください。</p>`);
+      const res = await fetch(C.aiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-App-Passcode": getPass() },
+        body: JSON.stringify({ duration: vd.duration, office, note, frames: frames.map((f) => ({ t: f.t, data: f.ai })) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.status === 401) { setPass(""); throw new Error("合言葉がちがうようです。もう一度入力してください。"); }
+      if (!res.ok || !j.draft) throw new Error(j.message || "AIの下書きを作れませんでした。");
+      vdProgress(`<div class="spinner"></div><p>手順書にまとめています…</p>`);
+      cur = await draftToManual(j.draft, frames, office, note);
+      page = 0;
+      await saveNow();
+      if (vd.url) URL.revokeObjectURL(vd.url);
+      vd.file = null; vd.url = null;
+      renderEditor();
+      toast("下書きができました。内容と写真を確認してください。", 4000);
+    } catch (e) {
+      console.error(e);
+      const msg = e.message === "frames" ? "動画から場面を取り出せませんでした。別の動画でお試しください。"
+        : e instanceof TypeError ? "AIにつながりませんでした。電波のよい所でもう一度お試しください。" : e.message;
+      showVideo();
+      vdProgress(`<div class="warn">${esc(msg)}</div>`);
+    }
+  }
+
+  async function draftToManual(d, frames, office, note) {
+    const m = newManual();
+    const L = (a) => (Array.isArray(a) ? a : []).map((x) => String(x).trim()).filter(Boolean).join("\n");
+    Object.assign(m, {
+      office: office || m.office,
+      major: C.majors.includes(d.major) ? d.major : "",
+      category: d.category || "", title: d.title || "",
+      purposeUser: d.purposeUser || "", purposeStaff: d.purposeStaff || "",
+      precautions: L(d.precautions), point1: L(d.point1), point2: L(d.point2), point3: L(d.point3),
+      memo: "この手順書は、作業の動画からAIが作った下書きです。内容を確認して直してください。",
+      aiDraft: { at: Date.now(), summary: d.summary || "", privacy: d.privacyNotes || [], uncertain: d.uncertainNotes || [], dismissed: false },
+    });
+    const steps = [];
+    for (const s of d.steps || []) {
+      const st = newStep();
+      Object.assign(st, { name: s.name || "", procedure: L(s.procedure), caution: L(s.caution), minutes: s.minutes > 0 ? String(s.minutes) : "" });
+      const f = frames[s.photoFrame];
+      if (f) {
+        const c = await cropPhoto(f.photo, s.photoFocusX, s.photoFocusY);
+        if (c) Object.assign(st, { photo: c.data, photoW: c.w, photoH: c.h });
+      }
+      st._branch = s.branch;
+      steps.push(st);
+    }
+    if (!steps.length) steps.push(newStep());
+    const idOf = (n) => (steps[Math.min(Math.max(1, n || 1), steps.length) - 1]).id;
+    steps.forEach((st, i) => {
+      const b = st._branch; delete st._branch;
+      st.branch = b && b.use && i < steps.length - 1 ? { use: true, text: b.text || "", backId: idOf(b.backTo) } : { use: false, text: "", backId: "" };
+    });
+    m.steps = steps;
+    const fc = d.finalCheck || {};
+    m.check = fc.use ? { use: true, text: fc.text || "", backId: idOf(fc.backTo) } : { use: false, text: "", backId: steps[0].id };
+    return m;
+  }
+
+  function aiBanner() {
+    const a = cur && cur.aiDraft;
+    if (!a || a.dismissed) return "";
+    const li = (arr) => arr.map((t) => `<li>${esc(t)}</li>`).join("");
+    return `
+      <div class="ai-banner">
+        <div class="ai-banner-ttl">✨ AIが動画から作った下書きです</div>
+        <p>内容と写真を<b>必ず確認</b>して、現場のやり方に合わせて直してください。写真は「④ 各ステップ」で差し替え・削除できます。</p>
+        ${a.privacy.length ? `<div class="ai-sub">⚠ 写真・個人情報の確認</div><ul>${li(a.privacy)}</ul>` : ""}
+        ${a.uncertain.length ? `<div class="ai-sub">？ AIが映像だけでは判断できなかったこと</div><ul>${li(a.uncertain)}</ul>` : ""}
+        <button class="btn btn-sm" data-act="ai-ok">確認しました（このお知らせを消す）</button>
+      </div>`;
   }
 
   window.addEventListener("pagehide", () => { if (cur) saveNow(); });

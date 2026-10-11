@@ -291,3 +291,24 @@ input[type=date] { min-height: 50px; padding: 8px 12px; border: 1.5px solid #c9c
   .rev-row .icon { grid-column: 2; grid-row: 1; }
   .rev-row input[type=text] { grid-column: 1 / 3; grid-row: 2; }
 }
+
+/* 動画から下書き（AI） */
+.hero-acts { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.hero-sub { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.vd .page { margin-top: 8px; }
+.vd-flow { margin: 0 0 16px; padding-left: 22px; }
+.vd-flow li { margin-bottom: 4px; }
+.tips { background: #F3F2EE; border-radius: 12px; padding: 10px 14px; font-size: 14px; margin-bottom: 18px; }
+.vd-video { width: 100%; max-height: 360px; background: #000; border-radius: 12px; display: block; margin-bottom: 6px; }
+.photo-btns.row { flex-direction: row; flex-wrap: wrap; }
+.vd-go { width: 100%; margin-top: 6px; }
+.vd-go:disabled { opacity: .45; cursor: not-allowed; }
+.vd-progress { margin-top: 16px; text-align: center; background: var(--yellow-soft); border-radius: 12px; padding: 16px; }
+.vd-progress .spinner { margin-bottom: 8px; }
+.vd-progress .warn { text-align: left; margin: 0; }
+select { min-height: 50px; }
+.ai-banner { background: #FFF6D6; border: 2px solid var(--yellow); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; font-size: 15px; }
+.ai-banner-ttl { font-weight: 800; font-size: 17px; margin-bottom: 4px; }
+.ai-banner p { margin: 0 0 8px; }
+.ai-banner ul { margin: 2px 0 10px; padding-left: 20px; }
+.ai-sub { font-weight: 700; margin-top: 6px; }
