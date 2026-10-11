@@ -49,7 +49,7 @@
     return {
       id: uid(), createdAt: Date.now(), updatedAt: Date.now(),
       office: C.offices.includes(p.office) ? p.office : "", title: "",
-      itemName: "", author: p.author || "", checker1: "", checker2: "", point1: "",
+      itemName: "", purposeUser: "", purposeStaff: "", author: p.author || "", checker1: "", checker2: "", point1: "",
       steps: [newStep(), newStep(), newStep()],
       check: { use: true, text: "", backTo: 1 },
       point2: "", point3: "",
@@ -64,7 +64,7 @@
 
   const PAGES = [
     { short: "はじめに", title: "事業所とタイトル" },
-    { short: "管理項目", title: "管理項目（だれが作ったか）" },
+    { short: "管理項目", title: "管理項目（目的・作成者など）" },
     { short: "全体の流れ", title: "全体の流れ（ワークフロー）" },
     { short: "各ステップ", title: "ステップごとのくわしい手順" },
     { short: "確認・出力", title: "仕上がりの確認と出力" },
@@ -180,6 +180,8 @@
   }
   function migrate(m) {
     m.check = m.check || { use: true, text: "", backTo: 1 };
+    m.purposeUser = m.purposeUser || "";
+    m.purposeStaff = m.purposeStaff || "";
     m.steps = (m.steps && m.steps.length ? m.steps : [newStep()]).map((s) => ({ ...newStep(), ...s }));
     return m;
   }
@@ -248,6 +250,11 @@
   function pageInfo() {
     return `
       ${field("項目名", "itemName", { hint: "この手順書があつかう業務の名前です。", ph: "例）入浴介助の手順／記録の書き方" })}
+      <div class="purpose">
+        <div class="purpose-ttl">目的 <small>（なんのために、この手順で行うのか）</small></div>
+        ${field("利用者さんにとっての目的", "purposeUser", { area: true, rows: 2, hint: "この手順で、利用者さんにどうなってほしいかを書きます。", ph: "例）清潔で気持ちよく過ごせる。安全に入浴できる。" })}
+        ${field("スタッフにとっての目的", "purposeStaff", { area: true, rows: 2, hint: "この手順書があると、スタッフにとって何がよいかを書きます。", ph: "例）だれが担当しても、同じ手順・同じ質でケアできる。" })}
+      </div>
       ${field("作成者（氏名）", "author", { req: true, ph: "例）山田 花子", ac: "name" })}
       ${field("確認者（1次）（氏名）", "checker1", { ph: "例）佐藤 太郎" })}
       ${field("確認者（2次）（氏名）", "checker2", { ph: "例）鈴木 一郎" })}
@@ -366,6 +373,7 @@
     const w = [];
     if (!cur.office) w.push([0, "事業所が選ばれていません"]);
     if (!cur.title.trim()) w.push([0, "タイトルが入っていません"]);
+    if (!cur.purposeUser.trim() && !cur.purposeStaff.trim()) w.push([1, "目的が入っていません"]);
     if (!cur.author.trim()) w.push([1, "作成者の名前が入っていません"]);
     cur.steps.forEach((s, i) => {
       if (!s.name.trim()) w.push([2, `ステップ${i + 1}の作業名が入っていません`]);

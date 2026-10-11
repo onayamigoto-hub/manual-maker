@@ -38,7 +38,7 @@ window.ManualOutput = (function () {
       company: C.company,
       office: m.office || "",
       title: (m.title || "").trim(),
-      info: [["項目名", m.itemName], ["作成者", m.author], ["確認者（1次）", m.checker1], ["確認者（2次）", m.checker2]].map(([l, v]) => [l, (v || "").trim()]),
+      info: [["項目名", m.itemName], ["目的（利用者）", m.purposeUser], ["目的（スタッフ）", m.purposeStaff], ["作成者", m.author], ["確認者（1次）", m.checker1], ["確認者（2次）", m.checker2]].map(([l, v]) => [l, (v || "").trim()]),
       points: [lines(m.point1), lines(m.point2), lines(m.point3)],
       steps,
       check: { use: m.check.use !== false, text: (m.check.text || "").trim(), back },
@@ -76,7 +76,7 @@ window.ManualOutput = (function () {
       <div class="d-office">事業所：${esc(d.office)}</div>
       <div class="d-title">【 ${esc(d.title) || "　".repeat(18)} 】</div>`, { gap: 26 });
     add(headingHTML(1, "管理項目"), { gap: 14 });
-    add(`<table class="d-info">${d.info.map(([l, v]) => `<tr><td class="d-info-l">${l}</td><td>${esc(v)}</td></tr>`).join("")}</table>`, { gap: 22 });
+    add(`<table class="d-info">${d.info.map(([l, v]) => `<tr><td class="d-info-l">${l}</td><td>${esc(v).replace(/\n/g, "<br>")}</td></tr>`).join("")}</table>`, { gap: 22 });
     add(pointHTML(d.points[0]));
 
     add(headingHTML(2, "ワークフロー（全体の流れ）"), { breakBefore: true, gap: 14 });
@@ -174,14 +174,14 @@ window.ManualOutput = (function () {
     }
 
     function infoTable() {
-      const lw = 1900, vw = CW - lw;
+      const lw = 2100, vw = CW - lw;
       return new Table({
         width: { size: CW, type: WidthType.DXA }, columnWidths: [lw, vw],
         rows: d.info.map(([l, v]) => new TableRow({ children: [
           new TableCell({ width: { size: lw, type: WidthType.DXA }, borders: ALL, shading: shade(CREAM), verticalAlign: VerticalAlign.CENTER, margins: { left: 100, right: 100, top: 60, bottom: 60 },
             children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(l, { bold: true })] })] }),
           new TableCell({ width: { size: vw, type: WidthType.DXA }, borders: ALL, verticalAlign: VerticalAlign.CENTER, margins: { left: 150, right: 100, top: 60, bottom: 60 },
-            children: [new Paragraph({ children: [run(v)] })] }),
+            children: v.split(/\r?\n/).map((t) => new Paragraph({ children: [run(t)] })) }),
         ] })),
       });
     }
@@ -306,7 +306,7 @@ window.ManualOutput = (function () {
     c.push(spacer(0));
 
     const doc = new Document({
-      creator: d.info[1][1] || C.company,
+      creator: d.info[3][1] || C.company,
       title: d.title || "手順書",
       styles: { default: { document: { run: { font: FONT, size: 20, color: BLACK } } } },
       sections: [{ properties: { page: { size: { width: PW, height: PH }, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } } }, children: c }],
