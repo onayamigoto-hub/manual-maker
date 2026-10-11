@@ -24,6 +24,13 @@ window.ManualOutput = (function () {
     return { w: Math.round(w * s), h: Math.round(h * s) };
   }
 
+  const ymd = (s) => (s ? String(s).replace(/^(\d{4})-0?(\d{1,2})-0?(\d{1,2})$/, "$1/$2/$3") : "");
+  // 手順書のタイトル行：【大分類】中分類｜小分類
+  function titleLine(d) {
+    if (!d.major && !d.category) return `【 ${d.title || "　".repeat(18)} 】`;
+    return `${d.major ? "【" + d.major + "】" : ""}${d.category ? d.category + "｜" : ""}${d.title || "　".repeat(10)}`;
+  }
+
   function norm(m) {
     const steps = m.steps.map((s, i) => ({
       n: i + 1,
@@ -42,15 +49,25 @@ window.ManualOutput = (function () {
       if (s.branch && s.branch.use) steps[i].branch = { text: (s.branch.text || "").trim(), back: numOf(s.branch.backId, i + 1) };
     });
     const back = numOf(m.check.backId, Math.min(Math.max(1, Number(m.check.backTo) || 1), Math.max(1, steps.length)));
-    return {
+    const d = {
       company: C.company,
       office: m.office || "",
       title: (m.title || "").trim(),
-      info: [["項目名", m.itemName], ["目的（利用者）", m.purposeUser], ["目的（スタッフ）", m.purposeStaff], ["作成者", m.author], ["確認者（1次）", m.checker1], ["確認者（2次）", m.checker2]].map(([l, v]) => [l, (v || "").trim()]),
+      major: m.major || "", category: (m.category || "").trim(),
+      precautions: lines(m.precautions),
+      memo: String(m.memo || "").split(/\r?\n/).map((t) => t.trim()).filter(Boolean),
+      created: ymd(m.createdDate),
+      revisions: (m.revisions || []).filter((r) => r.date || (r.note || "").trim()).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)))
+        .map((r) => ymd(r.date) + ((r.note || "").trim() ? `（${r.note.trim()}）` : "")),
+      info: [["分類", [m.major, (m.category || "").trim()].filter(Boolean).join(" ＞ ")], ["目的（利用者）", m.purposeUser], ["目的（スタッフ）", m.purposeStaff], ["作成者", m.author], ["確認者（1次）", m.checker1], ["確認者（2次）", m.checker2]].map(([l, v]) => [l, (v || "").trim()]),
       points: [lines(m.point1), lines(m.point2), lines(m.point3)],
       steps,
       check: { use: m.check.use !== false, text: (m.check.text || "").trim(), back },
     };
+    // 作成日・改訂履歴も ① 管理項目の表に入れる
+    d.info.push(["作成日", d.created], ["改訂履歴", d.revisions.join("\n") || "なし"]);
+    return d;
+
   }
 
   // ---------- 画面・PDF用（HTML） ----------
@@ -207,10 +224,13 @@ window.ManualOutput = (function () {
       <img class="d-logo" src="logo.png" alt="">
       <div class="d-company">${esc(d.company)}</div>
       <div class="d-office">事業所：${esc(d.office)}</div>
-      <div class="d-title">【 ${esc(d.title) || "　".repeat(18)} 】</div>`, { gap: 26 });
+      <div class="d-title">${esc(titleLine(d))}</div>`, { gap: 26 });
     add(headingHTML(1, "管理項目"), { gap: 14 });
     add(`<table class="d-info">${d.info.map(([l, v]) => `<tr><td class="d-info-l">${l}</td><td>${esc(v).replace(/\n/g, "<br>")}</td></tr>`).join("")}</table>`, { gap: 22 });
     add(pointHTML(d.points[0]));
+    if (d.precautions.length) add(`<div class="d-notes"><div class="d-notes-ttl">⚠ 注意事項・心得</div>${d.precautions.map((t) => `<div class="d-li">・${esc(t)}</div>`).join("")}</div>`);
+    // メモ・備考欄は、1ページ目の残りの余白いっぱいまで広げる（buildPages で調整）
+    add(`<div class="d-memo" data-memo="1"><div class="d-memo-ttl">メモ・備考欄</div>${d.memo.map((t) => `<div>${esc(t)}</div>`).join("")}</div>`, { gap: 0 });
 
     add(headingHTML(2, "ワークフロー（全体の流れ）"), { breakBefore: true, gap: 14 });
     const sl = flowSlices(d);
@@ -238,11 +258,11 @@ window.ManualOutput = (function () {
       el.style.paddingBottom = bl.gap + "px";
       el.innerHTML = bl.html;
       inner.appendChild(el);
-      return { el, h: el.offsetHeight, breakBefore: bl.breakBefore };
+      return { el, h: el.offsetHeight, breakBefore: bl.breakBefore, memo: !!el.querySelector("[data-memo]") };
     });
     host.innerHTML = "";
     const pages = [];
-    let cur = null, used = 0;
+    let cur = null, used = 0, memoAt = null;
     const newPage = () => {
       const p = document.createElement("div");
       p.className = "d-page";
@@ -270,7 +290,17 @@ window.ManualOutput = (function () {
       }
       cur.appendChild(x.el);
       used += x.h;
+      if (x.memo) memoAt = { el: x.el.querySelector("[data-memo]"), page: pages.length - 1 };
     });
+    // メモ欄をそのページの下まで伸ばす（次の部品が同じページに来ないとき）
+    if (memoAt) {
+      const pg = pages[memoAt.page].firstChild;
+      const h = [...pg.children].reduce((a, e) => a + e.offsetHeight, 0);
+      const extra = Math.max(0, SAFE_H - h - 10);
+      const isLast = pg.lastElementChild && pg.lastElementChild.contains(memoAt.el);
+      if (isLast && extra > 0) memoAt.el.style.minHeight = memoAt.el.offsetHeight + extra + "px";
+      pages.memoH = memoAt.el.offsetHeight;
+    }
     return pages;
   }
 
@@ -282,12 +312,15 @@ window.ManualOutput = (function () {
     return a;
   }
 
-  async function toDocxBlob(m) {
+  async function toDocxBlob(m, host) {
     const d = norm(m);
+    // メモ欄の高さは、画面の仕上がりと同じになるように測ってから決める
+    let memoH = 130;
+    if (host) { const pg = buildPages(m, host); memoH = pg.memoH || memoH; host.innerHTML = ""; }
     const {
       Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
       WidthType, BorderStyle, ShadingType, AlignmentType, ImageRun, PageBreak, VerticalAlign,
-      HorizontalPositionRelativeFrom, HorizontalPositionAlign, VerticalPositionRelativeFrom, TextWrappingType, TextWrappingSide,
+      HorizontalPositionRelativeFrom, HorizontalPositionAlign, HeightRule, VerticalPositionRelativeFrom, TextWrappingType, TextWrappingSide,
     } = window.docx;
     const { BLACK, YELLOW, GRAY, CREAM, WHITE, MEDGRAY } = HEX;
     const FONT = "Yu Gothic";
@@ -396,12 +429,38 @@ window.ManualOutput = (function () {
     } catch (e) { /* ロゴが読めないときは入れない */ }
     c.push(new Paragraph({ spacing: { after: 40 }, children: [...logoKids, run(d.company, { bold: true, size: 22 })] }));
     c.push(new Paragraph({ spacing: { after: 80 }, children: [run("事業所：", { bold: true, size: 22 }), run(d.office, { bold: true, size: 22 })] }));
-    c.push(new Paragraph({ spacing: { after: 300 }, children: [run(`【 ${d.title || "　".repeat(18)} 】`, { bold: true, size: 36 })] }));
+    c.push(new Paragraph({ spacing: { after: 300 }, children: [run(titleLine(d), { bold: true, size: 36 })] }));
 
     c.push(sectionHeading(1, "管理項目"));
     c.push(spacer());
     c.push(infoTable());
     if (d.points[0].length) { c.push(spacer(250)); c.push(pointBox(d.points[0])); }
+    if (d.precautions.length) {
+      const yb = line(YELLOW, 10);
+      c.push(spacer(200));
+      c.push(new Table({
+        width: { size: CW, type: WidthType.DXA }, columnWidths: [CW],
+        rows: [new TableRow({ cantSplit: true, children: [new TableCell({
+          width: { size: CW, type: WidthType.DXA }, borders: { top: yb, bottom: yb, left: yb, right: yb }, shading: shade("FFFBEA"),
+          margins: { left: 200, right: 200, top: 120, bottom: 120 },
+          children: [new Paragraph({ spacing: { after: 60 }, children: [run("⚠ 注意事項・心得", { bold: true, size: 20 })] }), ...d.precautions.map((t) => bullet(t))],
+        })] })],
+      }));
+    }
+    {
+      const db = { style: BorderStyle.DASHED, size: 8, color: MEDGRAY };
+      c.push(spacer(200));
+      // 画面で測った高さ（px）→ Word の単位（1px = 15）。Wordは行が少し高くなるので余裕をとる
+      const hTw = Math.max(1500, Math.round((memoH - 40) * 15));
+      c.push(new Table({
+        width: { size: CW, type: WidthType.DXA }, columnWidths: [CW],
+        rows: [new TableRow({ cantSplit: true, height: { value: hTw, rule: HeightRule.ATLEAST }, children: [new TableCell({
+          width: { size: CW, type: WidthType.DXA }, borders: { top: db, bottom: db, left: db, right: db },
+          margins: { left: 200, right: 200, top: 120, bottom: 120 },
+          children: [new Paragraph({ spacing: { after: 60 }, children: [run("メモ・備考欄", { bold: true, size: 20, color: "6B6B6B" })] }), ...d.memo.map((t) => new Paragraph({ children: [run(t)] }))],
+        })] })],
+      }));
+    }
     c.push(pageBreak());
 
     c.push(sectionHeading(2, "ワークフロー（全体の流れ）"));

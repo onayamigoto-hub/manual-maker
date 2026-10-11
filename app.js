@@ -43,12 +43,15 @@
     set(v) { try { localStorage.setItem("am-manual-pref", JSON.stringify({ ...pref.get(), ...v })); } catch (e) {} },
   };
 
+  const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
   const newStep = () => ({ id: uid(), name: "", heading: "", procedure: "", caution: "", minutes: "", photo: null, photoW: 0, photoH: 0, branch: { use: false, text: "", backId: "" } });
   function newManual() {
     const p = pref.get();
     return {
       id: uid(), createdAt: Date.now(), updatedAt: Date.now(),
       office: C.offices.includes(p.office) ? p.office : "", title: "",
+      major: "", category: "",
+      createdDate: today(), revisions: [], precautions: "", memo: "",
       itemName: "", purposeUser: "", purposeStaff: "", author: p.author || "", checker1: "", checker2: "", point1: "",
       steps: [newStep(), newStep(), newStep()],
       check: { use: true, text: "", backId: "" },
@@ -138,7 +141,7 @@
     $app.innerHTML = `
       <section class="home">
         <div class="hero">
-          <h1>手順書を、入力するだけでつくれます</h1>
+          <h1>手順を入力するだけで作れます</h1>
           <ol class="flow-guide">
             ${PAGES.map((p, i) => `<li><span>${i + 1}</span>${p.short}</li>`).join("")}
           </ol>
@@ -146,10 +149,16 @@
         </div>
 
         <h2 class="list-ttl">つくりかけ・つくった手順書 <small>${list.length}件</small></h2>
-        ${list.length ? `<ul class="mlist">${list.map((m) => `
+        ${list.length ? groupList(list).map(([major, cats]) => `
+          <section class="grp">
+            <h3 class="grp-major">${esc(major)}</h3>
+            ${cats.map(([cat, items]) => `
+              <h4 class="grp-cat">${esc(cat)} <small>${items.length}件</small></h4>
+              <ul class="mlist">${items.map((m) => `
           <li class="mitem">
             <button class="mitem-main" data-act="open" data-id="${m.id}">
               <span class="mitem-title">${esc(m.title) || "（タイトル未入力）"}</span>
+              <span class="mitem-path">${esc([m.major, m.category].filter(Boolean).join(" ＞ ") || "分類 未入力")}</span>
               <span class="mitem-meta">${esc(m.office) || "事業所 未選択"}｜ステップ ${m.steps.length}｜${fmt(m.updatedAt)}</span>
             </button>
             <div class="mitem-acts">
@@ -158,7 +167,8 @@
               <button class="btn btn-sm btn-ghost" data-act="backup" data-id="${m.id}">ファイルに保存</button>
               <button class="btn btn-sm btn-ghost danger" data-act="del" data-id="${m.id}">削除</button>
             </div>
-          </li>`).join("")}</ul>` : `<p class="empty">まだありません。上の黄色いボタンから始めましょう。</p>`}
+          </li>`).join("")}</ul>`).join("")}
+          </section>`).join("") : `<p class="empty">まだありません。上の黄色いボタンから始めましょう。</p>`}
 
         <div class="note">
           <b>保存について</b><br>
@@ -171,6 +181,21 @@
     window.scrollTo(0, 0);
   }
 
+  // 一覧を「大分類 ＞ 中分類」ごとにまとめる（章立て）
+  function groupList(list) {
+    const order = [...C.majors, "分類 未入力"];
+    const g = new Map();
+    list.forEach((m) => {
+      const mj = m.major || "分類 未入力", ct = m.category || "（中分類 未入力）";
+      if (!g.has(mj)) g.set(mj, new Map());
+      if (!g.get(mj).has(ct)) g.get(mj).set(ct, []);
+      g.get(mj).get(ct).push(m);
+    });
+    return [...g.entries()]
+      .sort((a, b) => (order.indexOf(a[0]) + 99) % 99 - (order.indexOf(b[0]) + 99) % 99 || a[0].localeCompare(b[0], "ja"))
+      .map(([mj, cats]) => [mj, [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0], "ja"))]);
+  }
+
   async function openManual(id) {
     const m = await DB.get(id);
     if (!m) return toast("見つかりませんでした");
@@ -181,6 +206,10 @@
   function migrate(m) {
     m.check = m.check || { use: true, text: "", backId: "" };
     m.purposeUser = m.purposeUser || "";
+    m.major = m.major || ""; m.category = m.category || "";
+    m.precautions = m.precautions || ""; m.memo = m.memo || "";
+    m.revisions = m.revisions || [];
+    if (!m.createdDate) { const d = new Date(m.createdAt || Date.now()); m.createdDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
     m.purposeStaff = m.purposeStaff || "";
     m.steps = (m.steps && m.steps.length ? m.steps : [newStep()]).map((s) => ({ ...newStep(), ...s }));
     // 以前の形式（戻り先を番号で持っていた）からの読みかえ
@@ -247,12 +276,36 @@
           ${C.offices.map((o, i) => `<label class="choice"><input type="radio" name="office" value="${esc(o)}" data-f="office" ${cur.office === o ? "checked" : ""}><span>${esc(o)}</span></label>`).join("")}
         </div>
       </div>
-      ${field("手順書のタイトル", "title", { req: true, hint: "どんな業務の手順書か、具体的にわかる名前にしましょう。", ph: "例）入浴介助の手順（一般浴）" })}`;
+      <div class="levels">
+        <div class="levels-ttl">分類 <small>（手順書を3段階に分けて整理します）</small></div>
+        <div class="field">
+          <label><span class="lv">1</span>大分類 <em class="req">必須</em></label>
+          <p class="hint">直接介助か、間接介助かを選んでください。</p>
+          <div class="choices two">
+            ${C.majors.map((o) => `<label class="choice"><input type="radio" name="major" value="${esc(o)}" data-f="major" ${cur.major === o ? "checked" : ""}><span>${esc(o)}</span></label>`).join("")}
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-category"><span class="lv">2</span>中分類 <em class="req">必須</em></label>
+          <p class="hint">業務のまとまりです。下の候補から選ぶか、自由に入力してください。</p>
+          <input id="f-category" type="text" data-f="category" value="${esc(cur.category)}" placeholder="例）${cur.major === "直接介助" ? "入浴" : "環境整備"}" autocomplete="off">
+          <div class="cat-chips" id="cat-chips">${catChips()}</div>
+        </div>
+        ${field('<span class="lv">3</span>小分類（手順書のタイトル）', "title", { req: true, hint: "具体的な業務名がわかるようにしましょう。", ph: cur.major === "直接介助" ? "例）一般浴の入浴介助" : "例）居室環境整備の手順" })}
+        <div class="levels-prev">手順書ではこう表示されます：<b id="title-prev">${esc(titleText())}</b></div>
+      </div>`;
+  }
+  function titleText() {
+    const t = cur.title.trim() || "（タイトル）";
+    return `${cur.major ? "【" + cur.major + "】" : ""}${cur.category.trim() ? cur.category.trim() + "｜" : ""}${t}`;
+  }
+  function catChips() {
+    const base = (cur.major && C.categories[cur.major]) || [...new Set(Object.values(C.categories).flat())];
+    return base.map((c) => `<button type="button" class="cchip ${cur.category === c ? "on" : ""}" data-act="cat" data-v="${esc(c)}">${esc(c)}</button>`).join("");
   }
 
   function pageInfo() {
     return `
-      ${field("項目名", "itemName", { hint: "この手順書があつかう業務の名前です。", ph: "例）入浴介助の手順／記録の書き方" })}
       <div class="purpose">
         <div class="purpose-ttl">目的 <small>（なんのために、この手順で行うのか）</small></div>
         ${field("利用者さんにとっての目的", "purposeUser", { area: true, rows: 2, hint: "この手順で、利用者さんにどうなってほしいかを書きます。", ph: "例）清潔で気持ちよく過ごせる。安全に入浴できる。" })}
@@ -261,7 +314,33 @@
       ${field("作成者（氏名）", "author", { req: true, ph: "例）山田 花子", ac: "name" })}
       ${field("確認者（1次）（氏名）", "checker1", { ph: "例）佐藤 太郎" })}
       ${field("確認者（2次）（氏名）", "checker2", { ph: "例）鈴木 一郎" })}
-      ${pointField("point1", "この手順書全体")}`;
+      <div class="dates">
+        <div class="field inline">
+          <label for="f-created">作成日</label>
+          <input id="f-created" type="date" data-f="createdDate" value="${esc(cur.createdDate)}">
+        </div>
+        <div class="field">
+          <label>改訂履歴 <small>（内容を直したときに記録します。作成日とあわせて「① 管理項目」の表に入ります）</small></label>
+          ${cur.revisions.length ? cur.revisions.map((r, i) => `
+            <div class="rev-row">
+              <input type="date" data-rev="date" data-i="${i}" value="${esc(r.date)}" aria-label="改訂した日">
+              <input type="text" data-rev="note" data-i="${i}" value="${esc(r.note)}" placeholder="直した内容（例：物品リストを更新）" aria-label="直した内容">
+              <button class="icon danger" data-act="rev-rm" data-i="${i}" aria-label="この記録を消す">✕</button>
+            </div>`).join("") : `<p class="hint">まだありません。</p>`}
+          <button class="btn btn-sm" data-act="rev-add">＋ 改訂を記録する（今日の日付）</button>
+        </div>
+      </div>
+      ${pointField("point1", "この手順書全体")}
+      <div class="field notes-in">
+        <label for="f-precautions">⚠ 注意事項・心得 <small>（なくてもOK）</small></label>
+        <p class="hint">この業務にあたるときの心がまえや、守ってほしいことを書きます。1行に1つずつ書くと「・」付きで並びます。</p>
+        <textarea id="f-precautions" data-f="precautions" rows="3" placeholder="例）利用者さんの私物には無断で触れない&#10;例）個人情報や写真の取り扱いに注意する">${esc(cur.precautions)}</textarea>
+      </div>
+      <div class="field">
+        <label for="f-memo">メモ・備考欄 <small>（なくてもOK）</small></label>
+        <p class="hint">書いた内容が入ります。何も書かなくても、手順書には手書き用の「メモ・備考欄」の枠が入ります。</p>
+        <textarea id="f-memo" data-f="memo" rows="2" placeholder="例）〇〇の物品は倉庫の右の棚にあります">${esc(cur.memo)}</textarea>
+      </div>`;
   }
 
   const stepLabel = (s, i) => `STEP ${i + 1}${s.name ? "（" + esc(s.name.slice(0, 14)) + "）" : ""}`;
@@ -398,7 +477,9 @@
   function checks() {
     const w = [];
     if (!cur.office) w.push([0, "事業所が選ばれていません"]);
-    if (!cur.title.trim()) w.push([0, "タイトルが入っていません"]);
+    if (!cur.major) w.push([0, "大分類（直接介助・間接介助）が選ばれていません"]);
+    if (!cur.category.trim()) w.push([0, "中分類が入っていません"]);
+    if (!cur.title.trim()) w.push([0, "小分類（タイトル）が入っていません"]);
     if (!cur.purposeUser.trim() && !cur.purposeStaff.trim()) w.push([1, "目的が入っていません"]);
     if (!cur.author.trim()) w.push([1, "作成者の名前が入っていません"]);
     cur.steps.forEach((s, i) => {
@@ -527,6 +608,20 @@
         if (hasContent(s) && !confirm(`ステップ${i + 1}「${s.name || "作業名なし"}」を消します。\n各ステップで入力した手順や写真も消えます。よろしいですか？`)) break;
         cur.steps.splice(i, 1); scheduleSave(); renderEditor(true); break;
       }
+      case "cat":
+        cur.category = b.dataset.v;
+        { const inp = document.getElementById("f-category"); if (inp) inp.value = cur.category; }
+        document.getElementById("cat-chips").innerHTML = catChips();
+        { const tp = document.getElementById("title-prev"); if (tp) tp.textContent = titleText(); }
+        scheduleSave(); break;
+      case "rev-add":
+        cur.revisions.push({ date: today(), note: "" });
+        scheduleSave(); renderEditor(true);
+        setTimeout(() => document.querySelector(`[data-rev="note"][data-i="${cur.revisions.length - 1}"]`)?.focus(), 50);
+        break;
+      case "rev-rm":
+        if (confirm("この改訂の記録を消しますか？")) { cur.revisions.splice(i, 1); scheduleSave(); renderEditor(true); }
+        break;
       case "br-add":
         cur.steps[i].branch = { use: true, text: "", backId: cur.steps[i].id };
         scheduleSave(); renderEditor(true);
@@ -567,6 +662,9 @@
       cur[t.dataset.f] = t.value;
       if (t.dataset.f === "office") pref.set({ office: t.value });
       if (t.dataset.f === "author") pref.set({ author: t.value });
+      if (t.dataset.f === "major") { scheduleSave(); renderEditor(true); return; }
+      if (t.dataset.f === "category") { const cc = document.getElementById("cat-chips"); if (cc) cc.innerHTML = catChips(); }
+      if (["major", "category", "title"].includes(t.dataset.f)) { const tp = document.getElementById("title-prev"); if (tp) tp.textContent = titleText(); }
     } else if (t.dataset.sf) {
       const i = Number(t.dataset.i);
       cur.steps[i][t.dataset.sf] = t.value;
@@ -578,6 +676,8 @@
     } else if (t.dataset.check) {
       if (t.dataset.check === "use") { cur.check.use = t.checked; scheduleSave(); renderEditor(true); return; }
       cur.check[t.dataset.check] = t.value;
+    } else if (t.dataset.rev) {
+      cur.revisions[Number(t.dataset.i)][t.dataset.rev] = t.value;
     } else if (t.dataset.br) {
       cur.steps[Number(t.dataset.i)].branch[t.dataset.br] = t.value;
     } else return;
@@ -663,7 +763,7 @@
     busy(true, "Wordファイルを作っています…");
     try {
       await loadScript("lib/docx.js");
-      const blob = await window.ManualOutput.toDocxBlob(cur);
+      const blob = await window.ManualOutput.toDocxBlob(cur, document.getElementById("render-area"));
       download(blob, window.ManualOutput.fileBase(cur) + ".docx");
       toast("Wordファイルができました（ダウンロードの中にあります）", 3500);
     } catch (e) {
