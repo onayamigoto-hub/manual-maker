@@ -312,3 +312,24 @@ select { min-height: 50px; }
 .ai-banner p { margin: 0 0 8px; }
 .ai-banner ul { margin: 2px 0 10px; padding-left: 20px; }
 .ai-sub { font-weight: 700; margin-top: 6px; }
+
+/* Claudeで下書き */
+.cl .vd-flow li.on { font-weight: 700; }
+.cl .vd-flow li.done { color: var(--muted); }
+.cl-h { display: flex; align-items: center; gap: 8px; font-size: 18px; margin: 22px 0 10px; }
+.cl-h span { width: 30px; height: 30px; border-radius: 50%; background: var(--black); color: #fff; display: grid; place-items: center; font-size: 15px; }
+.cl-picked { margin-top: 10px; padding: 10px 14px; background: #EEF7EE; border-radius: 10px; color: var(--ok); font-weight: 700; }
+.cl-done { padding: 10px 14px; background: #EEF7EE; border-radius: 10px; color: var(--ok); font-weight: 700; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.cl-done .link { color: var(--black); font-weight: 400; font-size: 14px; }
+.cl-how { padding-left: 22px; margin: 0 0 12px; }
+.cl-how li { margin-bottom: 6px; }
+.cl-how small { color: var(--muted); }
+.cl-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.cl-prompt { margin-bottom: 14px; font-size: 14px; }
+.cl-prompt pre { white-space: pre-wrap; background: #F3F2EE; border-radius: 10px; padding: 12px; font-size: 13px; max-height: 260px; overflow: auto; }
+.cl-sheets { display: grid; gap: 14px; }
+.cl-sheet { margin: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+.cl-sheet img { width: 100%; display: block; }
+.cl-sheet figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; font-size: 14px; font-weight: 700; }
+.cl-sheet figcaption span { display: flex; gap: 6px; }
+#cl-reply { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; }

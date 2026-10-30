@@ -13,16 +13,21 @@
   const DB = (() => {
     let p;
     const open = () => p || (p = new Promise((res, rej) => {
-      const r = indexedDB.open("activemore-manual", 1);
-      r.onupgradeneeded = () => r.result.createObjectStore("manuals", { keyPath: "id" });
+      const r = indexedDB.open("activemore-manual", 2);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains("manuals")) db.createObjectStore("manuals", { keyPath: "id" });
+        // 「Claudeで下書き」の作業途中（取り出した場面）を一時的に置く場所
+        if (!db.objectStoreNames.contains("jobs")) db.createObjectStore("jobs", { keyPath: "id" });
+      };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     }));
-    const tx = async (mode, fn) => {
+    const tx = async (mode, fn, store = "manuals") => {
       const db = await open();
       return new Promise((res, rej) => {
-        const t = db.transaction("manuals", mode);
-        const req = fn(t.objectStore("manuals"));
+        const t = db.transaction(store, mode);
+        const req = fn(t.objectStore(store));
         t.oncomplete = () => res(req && req.result);
         t.onerror = () => rej(t.error);
         t.onabort = () => rej(t.error);
@@ -33,6 +38,9 @@
       get: (id) => tx("readonly", (s) => s.get(id)),
       put: (m) => tx("readwrite", (s) => s.put(m)),
       del: (id) => tx("readwrite", (s) => s.delete(id)),
+      jobGet: () => tx("readonly", (s) => s.get("job"), "jobs"),
+      jobPut: (j) => tx("readwrite", (s) => s.put({ ...j, id: "job" }), "jobs"),
+      jobDel: () => tx("readwrite", (s) => s.delete("job"), "jobs"),
     };
   })();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -148,9 +156,10 @@
           <div class="hero-acts">
             <button class="btn btn-yellow btn-xl" data-act="new">＋ 新しい手順書をつくる</button>
             <label class="btn btn-black btn-xl">📂 下書きファイルを開く<input type="file" accept=".json,application/json" data-act="import" hidden></label>
+            <button class="btn btn-xl" data-act="claude">🤖 動画・写真から下書きをつくる（Claude）</button>
             ${C.aiEndpoint ? `<button class="btn btn-xl" data-act="video">🎬 動画から下書きをつくる（AI）</button>` : ""}
           </div>
-          <p class="hero-sub">管理者から届いた下書きファイル（「〜_下書き.json」）は、「下書きファイルを開く」から開いて、続きを入力できます。</p>
+          <p class="hero-sub">動画や写真から、Claude（AI）を使って下書きを作れます。届いた下書きファイル（「〜_下書き.json」）は「下書きファイルを開く」から開けます。</p>
         </div>
 
         <h2 class="list-ttl">つくりかけ・つくった手順書 <small>${list.length}件</small></h2>
@@ -586,6 +595,13 @@
     switch (act) {
       case "new": cur = newManual(); page = 0; await saveNow(); renderEditor(); break;
       case "video": showVideo(); break;
+      case "claude": showClaude(); break;
+      case "cl-make": makeClaudeJob(); break;
+      case "cl-copy-prompt": copyText(cj.job.prompt, "指示文をコピーしました。Claudeのチャット欄に貼り付けてください。"); break;
+      case "cl-copy-img": copyImage(cj.job.sheets[i]); break;
+      case "cl-save-img": download(await (await fetch(cj.job.sheets[i])).blob(), `場面一覧_${i + 1}.png`); break;
+      case "cl-build": buildFromReply(); break;
+      case "cl-reset": if (confirm("取り出した場面を消して、最初からやり直しますか？")) { await DB.jobDel(); cj.job = null; cj.items = []; showClaude(); } break;
       case "vd-run": runVideoDraft(); break;
       case "vd-reset": vd.file = null; showVideo(); break;
       case "ai-ok": if (cur && cur.aiDraft) { cur.aiDraft.dismissed = true; await saveNow(); renderEditor(true); } break;
@@ -901,7 +917,7 @@
   });
 
   // 動画から場面を取り出す（AI用の小さい写真と、手順書用の大きい写真）
-  async function extractFrames(url, duration, onStep) {
+  async function extractFrames(url, duration, onStep, maxN = 30) {
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
     v.style.cssText = "position:fixed;left:-9999px;top:0;width:2px;height:2px";
@@ -909,7 +925,7 @@
     try {
       await once(v, "loadeddata", 20000);
       try { await v.play(); v.pause(); } catch (e) { /* 自動再生できない端末でも続ける */ }
-      const n = Math.max(8, Math.min(30, Math.round(duration / 4)));
+      const n = Math.max(8, Math.min(maxN, Math.round(duration / 4)));
       const W = v.videoWidth, H = v.videoHeight;
       const cv = document.createElement("canvas"), ctx = cv.getContext("2d");
       const shot = (max, q) => {
@@ -1040,6 +1056,291 @@
         ${a.uncertain.length ? `<div class="ai-sub">？ AIが映像だけでは判断できなかったこと</div><ul>${li(a.uncertain)}</ul>` : ""}
         <button class="btn btn-sm" data-act="ai-ok">確認しました（このお知らせを消す）</button>
       </div>`;
+  }
+
+  // =============================================================
+  // 動画・写真から下書きをつくる（Claude のチャットを使う方法）
+  //   APIは使わず、担当者の Claude アカウントで行う。
+  //   1. アプリが場面を取り出し、番号つきの「場面一覧」画像と「指示文」を作る
+  //   2. 担当者が Claude のチャットに、指示文と場面一覧を貼って送る
+  //   3. Claude の返事（決まった形の文字）をアプリに貼ると、下書きができる
+  // =============================================================
+  const cj = { items: [], kind: "", duration: 0, job: null };
+
+  async function showClaude() {
+    cur = null;
+    try { cj.job = await DB.jobGet(); } catch (e) { cj.job = null; }
+    const p = pref.get();
+    const j = cj.job;
+    $app.innerHTML = `
+      <section class="vd cl">
+        <button class="link" data-act="home">← 一覧にもどる</button>
+        <div class="page">
+          <h2 class="page-ttl"><span>🤖</span>動画・写真から下書きをつくる</h2>
+          <ol class="vd-flow">
+            <li class="${j ? "done" : "on"}"><b>動画か写真を選ぶ</b> → アプリが「場面一覧」と「指示文」を作ります</li>
+            <li class="${j ? "on" : ""}"><b>Claudeに貼り付けて送る</b>（Claudeのアカウントが必要です）</li>
+            <li class="${j ? "on" : ""}"><b>Claudeの返事をアプリに貼り付ける</b> → 下書きができます</li>
+          </ol>
+          <div class="privacy">⚠ <b>個人情報の注意</b>：利用者さんの<b>顔・名前</b>、名札や書類が写っていない動画・写真を使ってください。場面一覧の画像はClaude（Anthropic社）に送られます。動画そのものや音声は送りません。</div>
+          ${j ? stepsAfterJob(j) : stepChoose(p)}
+        </div>
+      </section>`;
+    window.scrollTo(0, 0);
+  }
+
+  function stepChoose(p) {
+    const n = cj.items.length;
+    return `
+      <h3 class="cl-h"><span>1</span>動画か写真を選ぶ</h3>
+      <div class="field">
+        <label for="cl-office">事業所</label>
+        <select id="cl-office"><option value="">（あとで選ぶ）</option>${C.offices.map((o) => `<option ${p.office === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
+      </div>
+      <div class="field">
+        <label>動画または写真 <em class="req">必須</em></label>
+        <p class="hint">動画なら1本、写真なら<b>作業の順番どおりに撮った写真</b>を何枚でも（撮った時刻の順に並びます）。</p>
+        <div class="photo-btns row">
+          ${isTouch ? `<label class="btn">📹 動画を撮る<input type="file" accept="video/*" capture="environment" data-cfile hidden></label>` : ""}
+          <label class="btn">🎬 動画を選ぶ<input type="file" accept="video/*" data-cfile hidden></label>
+          <label class="btn">📷 写真を選ぶ（何枚でも）<input type="file" accept="image/*" multiple data-cfile hidden></label>
+        </div>
+        ${n ? `<div class="cl-picked">${cj.kind === "video"
+          ? `🎬 動画を選びました（${fmtDur(cj.duration)}）`
+          : `📷 写真を ${n} 枚選びました`}</div>` : ""}
+      </div>
+      <div class="field">
+        <label for="cl-note">補足メモ <small>（なくてもOK）</small></label>
+        <p class="hint">何の作業か、気をつけていること、動画で話していた説明などを書くと、下書きがより正確になります。</p>
+        <textarea id="cl-note" rows="3" placeholder="例）デイサービスで3時のおやつに出すコーヒーの準備。好み表を見て、ミルクと砂糖を入れ分ける。"></textarea>
+      </div>
+      <button class="btn btn-xl btn-yellow vd-go" data-act="cl-make" ${n ? "" : "disabled"}>場面一覧と指示文をつくる →</button>
+      <div id="cl-progress" class="vd-progress" hidden></div>`;
+  }
+
+  function stepsAfterJob(j) {
+    return `
+      <div class="cl-done">✓ ${j.kind === "video" ? `動画（${fmtDur(j.duration)}）` : `写真 ${j.frames.length} 枚`}から、場面を ${j.frames.length} 枚取り出しました。
+        <button class="link" data-act="cl-reset">最初からやり直す</button></div>
+
+      <h3 class="cl-h"><span>2</span>Claudeに貼り付けて送る</h3>
+      <ol class="cl-how">
+        <li>下の「🌐 Claudeを開く」を押して、<b>新しいチャット</b>を開きます。</li>
+        <li>「📋 指示文をコピー」を押して、Claudeのチャット欄に<b>貼り付けます</b>（パソコンは Ctrl＋V、スマホは長押し→ペースト）。</li>
+        <li>下の<b>場面一覧の画像</b>を、チャットに添えます。
+          <br><small>パソコン：「📋 画像をコピー」→ チャット欄で Ctrl＋V（またはドラッグ）。スマホ：「💾 保存」→ チャットのクリップ（＋）から写真を選ぶ。</small></li>
+        <li>送信して、Claudeの返事が終わるまで待ちます（1〜2分）。</li>
+      </ol>
+      <div class="cl-btns">
+        <a class="btn btn-black" href="https://claude.ai/new" target="_blank" rel="noopener">🌐 Claudeを開く</a>
+        <button class="btn btn-yellow" data-act="cl-copy-prompt">📋 指示文をコピー</button>
+      </div>
+      <details class="cl-prompt"><summary>指示文の中身を見る</summary><pre>${esc(j.prompt)}</pre></details>
+      <div class="cl-sheets">
+        ${j.sheets.map((u, i) => `
+          <figure class="cl-sheet">
+            <img src="${u}" alt="場面一覧 ${i + 1}">
+            <figcaption>場面一覧 ${i + 1} / ${j.sheets.length}
+              <span><button class="btn btn-sm" data-act="cl-copy-img" data-i="${i}">📋 画像をコピー</button>
+              <button class="btn btn-sm btn-ghost" data-act="cl-save-img" data-i="${i}">💾 保存</button></span></figcaption>
+          </figure>`).join("")}
+      </div>
+
+      <h3 class="cl-h"><span>3</span>Claudeの返事を貼り付ける</h3>
+      <p class="hint">Claudeの返事を<b>全部</b>コピーして、ここに貼り付けてください（返事の下にあるコピーのボタンが便利です）。</p>
+      <textarea id="cl-reply" rows="6" placeholder="ここに Claude の返事を貼り付け"></textarea>
+      <button class="btn btn-xl btn-yellow vd-go" data-act="cl-build">✨ 下書きをつくる</button>`;
+  }
+
+  // 素材を選んだとき
+  document.addEventListener("change", async (e) => {
+    const t = e.target;
+    if (!t.hasAttribute || !t.hasAttribute("data-cfile") || !t.files || !t.files.length) return;
+    const files = [...t.files];
+    const note = document.getElementById("cl-note")?.value || "";
+    if (files[0].type.startsWith("video/")) {
+      const url = URL.createObjectURL(files[0]);
+      let d = 0;
+      try { d = await videoDuration(url); } catch (err) { d = 0; }
+      if (!d) { URL.revokeObjectURL(url); toast("この動画は読み込めませんでした。別の動画でお試しください。", 4000); return; }
+      cj.items = [{ url }]; cj.kind = "video"; cj.duration = d;
+    } else {
+      cj.items = files.filter((f) => f.type.startsWith("image/") || !f.type).sort((a, b) => a.lastModified - b.lastModified);
+      cj.kind = "photo"; cj.duration = 0;
+    }
+    await showClaude();
+    const nt = document.getElementById("cl-note"); if (nt) nt.value = note;
+  });
+
+  async function makeClaudeJob() {
+    const office = document.getElementById("cl-office").value;
+    const note = document.getElementById("cl-note").value;
+    if (office) pref.set({ office });
+    const prog = (h) => { const el = document.getElementById("cl-progress"); if (el) { el.hidden = false; el.innerHTML = h; } };
+    document.querySelector(".vd-go").disabled = true;
+    try {
+      let frames = [];
+      if (cj.kind === "video") {
+        const raw = await extractFrames(cj.items[0].url, cj.duration, (i, n) => prog(`<div class="spinner"></div><p>動画から場面を取り出しています… <b>${i} / ${n}</b></p>`), 24);
+        frames = raw.map((f) => ({ t: f.t, photo: f.photo }));
+        URL.revokeObjectURL(cj.items[0].url);
+      } else {
+        const list = cj.items.slice(0, 36);
+        for (let i = 0; i < list.length; i++) {
+          prog(`<div class="spinner"></div><p>写真を準備しています… <b>${i + 1} / ${list.length}</b></p>`);
+          try { const r = await processImage(list[i]); frames.push({ t: null, photo: r.data }); } catch (err) { /* 読めない写真はとばす */ }
+        }
+      }
+      if (frames.length < 2) throw new Error("場面を取り出せませんでした。別の動画・写真でお試しください。");
+      prog(`<div class="spinner"></div><p>場面一覧をつくっています…</p>`);
+      const sheets = await makeSheets(frames);
+      const job = { kind: cj.kind, duration: cj.duration, office, note, frames, sheets, prompt: claudePrompt(frames, office, note), at: Date.now() };
+      await DB.jobPut(job);
+      cj.items = [];
+      await showClaude();
+    } catch (e) {
+      console.error(e);
+      prog(`<div class="warn">${esc(e.message || "うまくいきませんでした。もう一度お試しください。")}</div>`);
+      const b = document.querySelector(".vd-go"); if (b) b.disabled = false;
+    }
+  }
+
+  // 番号つきの場面一覧（12枚で1枚の画像）
+  function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
+  async function makeSheets(frames) {
+    const COLS = 4, ROWS = 3, CW = 400, CH = 330, PAD = 8, PER = COLS * ROWS;
+    const out = [];
+    for (let k = 0; k < frames.length; k += PER) {
+      const batch = frames.slice(k, k + PER);
+      const rows = Math.ceil(batch.length / COLS);
+      const cv = document.createElement("canvas");
+      cv.width = COLS * CW; cv.height = rows * CH;
+      const x = cv.getContext("2d");
+      x.fillStyle = "#fff"; x.fillRect(0, 0, cv.width, cv.height);
+      for (let i = 0; i < batch.length; i++) {
+        const img = await loadImg(batch[i].photo);
+        const cx = (i % COLS) * CW, cy = Math.floor(i / COLS) * CH;
+        const s = Math.min((CW - PAD * 2) / img.width, (CH - PAD * 2) / img.height);
+        const w = img.width * s, h = img.height * s;
+        x.fillStyle = "#E5E5E5"; x.fillRect(cx + PAD, cy + PAD, CW - PAD * 2, CH - PAD * 2);
+        x.drawImage(img, cx + (CW - w) / 2, cy + (CH - h) / 2, w, h);
+        const no = String(k + i + 1);
+        x.fillStyle = "#F5C542"; x.strokeStyle = "#1A1A1A"; x.lineWidth = 3;
+        x.beginPath(); x.arc(cx + 36, cy + 36, 26, 0, Math.PI * 2); x.fill(); x.stroke();
+        x.fillStyle = "#1A1A1A"; x.font = "bold 28px sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+        x.fillText(no, cx + 36, cy + 37);
+        if (batch[i].t != null) {
+          const label = `${Math.floor(batch[i].t / 60)}:${String(Math.floor(batch[i].t % 60)).padStart(2, "0")}`;
+          x.font = "bold 20px sans-serif"; x.textAlign = "right";
+          x.fillStyle = "rgba(0,0,0,.65)"; x.fillRect(cx + CW - PAD - 74, cy + PAD + 6, 66, 28);
+          x.fillStyle = "#fff"; x.fillText(label, cx + CW - PAD - 14, cy + PAD + 21);
+        }
+      }
+      out.push(cv.toDataURL("image/png"));
+    }
+    return out;
+  }
+
+  function claudePrompt(frames, office, note) {
+    const n = frames.length;
+    const what = frames[0].t != null
+      ? `添付の「場面一覧」は、作業の様子を撮った動画（長さ約${Math.round(cj.duration)}秒）から一定の間隔で取り出した${n}枚の場面です。黄色い丸の数字が場面の番号、右上が動画の時刻です。`
+      : `添付の「場面一覧」は、作業の順番どおりに撮った${n}枚の写真です。黄色い丸の数字が写真の番号（撮った順）です。`;
+    return `あなたは介護・医療事業所（株式会社アクティブモア）の手順書づくりを手伝います。
+${what}
+新人や他の職員が読んでも同じように作業できる「手順書の下書き」を作ってください。
+${office ? `\n事業所：${office}` : ""}${note.trim() ? `\n撮った職員からの補足：${note.trim()}` : ""}
+
+【書き方のきまり】
+- やさしい日本語で、短く具体的に。作業手順は「〜する」で終わる1行ずつ、1ステップ2〜4行。
+- ステップは作業の順番どおり。ふつうは3〜8個。
+- 写真や映像で確かめられないことを事実として書かない。推測したことや、わからなかったことは uncertainNotes に書く。
+- 目安の時間は分で（わからなければ 0）。
+- 確認（分岐）は「確かめる・見比べる」場面がはっきりある所だけ。NOのときに戻るステップ番号を backTo に入れる。
+- major は「直接介助」（利用者さんへの直接のケア）か「間接介助」（準備・片付け・環境づくり・記録など）。
+- category（中分類）は、入浴・排泄・食事・移乗・移動・更衣・整容・口腔ケア・服薬・バイタル測定・機能訓練・リハビリ・送迎・看護処置・環境整備・記録・報告・衛生・感染対策・物品管理・調理・配膳・洗濯・受付・電話対応・申し送り・会議・緊急時対応 から近いもの。
+
+【個人情報のきまり（とても大切）】
+- 利用者さん・職員の氏名、表・名札・書類・画面に写った名前は、どこにも書かない。
+- 各ステップの写真（photoFrame）には、人の顔や読める名前・書類が写っていない場面の番号を選ぶ。手元や物が写っている場面がよい。ない場合は -1。
+- 名前や顔が写っていた場面は privacyNotes に「場面〇：〜が写っている」と書く（名前そのものは書かない）。
+
+【返事の形】
+説明や前置きは書かずに、次の形のJSONだけを返してください（photoFrame は場面の番号 1〜${n}、photoFocusX / photoFocusY は写真の中で作業の中心がある位置 0〜1）。
+\`\`\`json
+{
+  "summary": "何の作業か（1文）",
+  "title": "手順書のタイトル（例：3時のおやつのコーヒー準備）",
+  "major": "間接介助",
+  "category": "調理・配膳",
+  "purposeUser": "利用者さんにとっての目的（1文）",
+  "purposeStaff": "スタッフにとっての目的（1文）",
+  "precautions": ["注意事項・心得（0〜4行）"],
+  "point1": [], "point2": [], "point3": [],
+  "steps": [
+    {"name": "作業名", "procedure": ["手順1", "手順2"], "caution": ["注意点"], "minutes": 3,
+     "photoFrame": 1, "photoFocusX": 0.5, "photoFocusY": 0.5,
+     "branch": {"use": false, "text": "", "backTo": 1}}
+  ],
+  "finalCheck": {"use": true, "text": "最後に確かめること", "backTo": 1},
+  "privacyNotes": [],
+  "uncertainNotes": []
+}
+\`\`\``;
+  }
+
+  async function copyText(t, okMsg) {
+    try { await navigator.clipboard.writeText(t); toast(okMsg, 3500); }
+    catch (e) {
+      const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); toast(okMsg, 3500); } catch (err) { toast("コピーできませんでした。「指示文の中身を見る」から選んでコピーしてください。", 4500); }
+      ta.remove();
+    }
+  }
+  async function copyImage(dataUrl) {
+    try {
+      const blob = fetch(dataUrl).then((r) => r.blob());
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      toast("画像をコピーしました。Claudeのチャット欄に貼り付けてください。", 3500);
+    } catch (e) {
+      toast("この端末では画像をコピーできませんでした。「💾 保存」してから添付してください。", 4500);
+    }
+  }
+
+  // Claude の返事から JSON を取り出す
+  function parseReply(text) {
+    const t = String(text || "");
+    const m = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let body = m ? m[1] : t;
+    const a = body.indexOf("{"), b = body.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error("no json");
+    const d = JSON.parse(body.slice(a, b + 1));
+    if (!Array.isArray(d.steps) || !d.steps.length) throw new Error("no steps");
+    return d;
+  }
+
+  async function buildFromReply() {
+    const j = cj.job;
+    const text = document.getElementById("cl-reply").value;
+    if (!text.trim()) { toast("Claudeの返事を貼り付けてください。"); return; }
+    let d;
+    try { d = parseReply(text); }
+    catch (e) { toast("返事を読み取れませんでした。Claudeの返事を、最初から最後まで全部コピーして貼り付けてください。", 5000); return; }
+    busy(true, "下書きをつくっています…");
+    try {
+      // 場面の番号（1から）→ 取り出した場面の位置（0から）
+      d.steps.forEach((s) => { s.photoFrame = Number(s.photoFrame) >= 1 ? Number(s.photoFrame) - 1 : -1; });
+      cur = await draftToManual(d, j.frames, j.office, j.note);
+      cur.memo = "この手順書は、動画・写真をもとにClaude（AI）が作った下書きです。内容と写真を確認して直してください。";
+      page = 0;
+      await saveNow();
+      await DB.jobDel(); cj.job = null;
+      renderEditor();
+      toast("下書きができました。内容と写真を確認してください。", 4000);
+    } catch (e) {
+      console.error(e);
+      toast("下書きを作れませんでした。もう一度お試しください。", 4000);
+    } finally { busy(false); }
   }
 
   window.addEventListener("pagehide", () => { if (cur) saveNow(); });
