@@ -18,6 +18,7 @@ body {
   margin: 0; background: var(--bg); color: var(--black);
   font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "YuGothic", Meiryo, "Noto Sans JP", sans-serif;
   font-size: 17px; line-height: 1.7;
+  text-spacing-trim: space-all;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 b { font-weight: 700; }

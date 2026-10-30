@@ -1050,7 +1050,7 @@
     const li = (arr) => arr.map((t) => `<li>${esc(t)}</li>`).join("");
     return `
       <div class="ai-banner">
-        <div class="ai-banner-ttl">✨ AIが動画から作った下書きです</div>
+        <div class="ai-banner-ttl">✨ AIが動画・写真から作った下書きです</div>
         <p>内容と写真を<b>必ず確認</b>して、現場のやり方に合わせて直してください。写真は「④ 各ステップ」で差し替え・削除できます。</p>
         ${a.privacy.length ? `<div class="ai-sub">⚠ 写真・個人情報の確認</div><ul>${li(a.privacy)}</ul>` : ""}
         ${a.uncertain.length ? `<div class="ai-sub">？ AIが映像だけでは判断できなかったこと</div><ul>${li(a.uncertain)}</ul>` : ""}
