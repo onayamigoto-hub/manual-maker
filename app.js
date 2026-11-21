@@ -597,6 +597,13 @@
       case "video": showVideo(); break;
       case "claude": showClaude(); break;
       case "cl-make": makeClaudeJob(); break;
+      case "cl-open": {
+        // 指示文をコピーしてから Claude を新しいタブで開く（1回の操作で両方）
+        copyText(cj.job.prompt, "指示文をコピーしました。Claudeのチャット欄に貼り付けてください。");
+        window.open("https://claude.ai/new", "_blank", "noopener");
+        break;
+      }
+      case "cl-paste": pasteReplyAndBuild(); break;
       case "cl-copy-prompt": copyText(cj.job.prompt, "指示文をコピーしました。Claudeのチャット欄に貼り付けてください。"); break;
       case "cl-copy-img": copyImage(cj.job.sheets[i]); break;
       case "cl-save-img": download(await (await fetch(cj.job.sheets[i])).blob(), `場面一覧_${i + 1}.png`); break;
@@ -1079,8 +1086,8 @@
           <h2 class="page-ttl"><span>🤖</span>動画・写真から下書きをつくる</h2>
           <ol class="vd-flow">
             <li class="${j ? "done" : "on"}"><b>動画か写真を選ぶ</b> → アプリが「場面一覧」と「指示文」を作ります</li>
-            <li class="${j ? "on" : ""}"><b>Claudeに貼り付けて送る</b>（Claudeのアカウントが必要です）</li>
-            <li class="${j ? "on" : ""}"><b>Claudeの返事をアプリに貼り付ける</b> → 下書きができます</li>
+            <li class="${j ? "on" : ""}"><b>ボタンでClaudeを開いて、貼り付けて送る</b>（Claudeのアカウントが必要です）</li>
+            <li class="${j ? "on" : ""}"><b>返事をコピーして、ボタンを1回押す</b> → 下書きができます</li>
           </ol>
           <div class="privacy">⚠ <b>個人情報の注意</b>：利用者さんの<b>顔・名前</b>、名札や書類が写っていない動画・写真を使ってください。場面一覧の画像はClaude（Anthropic社）に送られます。動画そのものや音声は送りません。</div>
           ${j ? stepsAfterJob(j) : stepChoose(p)}
@@ -1123,18 +1130,16 @@
       <div class="cl-done">✓ ${j.kind === "video" ? `動画（${fmtDur(j.duration)}）` : `写真 ${j.frames.length} 枚`}から、場面を ${j.frames.length} 枚取り出しました。
         <button class="link" data-act="cl-reset">最初からやり直す</button></div>
 
-      <h3 class="cl-h"><span>2</span>Claudeに貼り付けて送る</h3>
+      <h3 class="cl-h"><span>2</span>Claudeに送る</h3>
+      <div class="cl-btns">
+        <button class="btn btn-xl btn-yellow" data-act="cl-open">① Claudeを開く（指示文は自動でコピーされます）</button>
+      </div>
       <ol class="cl-how">
-        <li>下の「🌐 Claudeを開く」を押して、<b>新しいチャット</b>を開きます。</li>
-        <li>「📋 指示文をコピー」を押して、Claudeのチャット欄に<b>貼り付けます</b>（パソコンは Ctrl＋V、スマホは長押し→ペースト）。</li>
-        <li>下の<b>場面一覧の画像</b>を、チャットに添えます。
-          <br><small>パソコン：「📋 画像をコピー」→ チャット欄で Ctrl＋V（またはドラッグ）。スマホ：「💾 保存」→ チャットのクリップ（＋）から写真を選ぶ。</small></li>
+        <li>Claudeが開いたら、チャット欄をクリックして<b>貼り付け</b>（パソコンは Ctrl＋V、スマホは長押し→ペースト）。</li>
+        <li>つづけて、下の「<b>画像をコピー</b>」を押して、同じチャット欄にもう一度<b>貼り付け</b>。<small>（写真が多いときは、場面一覧の数だけくりかえし）</small>
+          <br><small>スマホ：「💾 保存」→ チャットのクリップ（＋）から写真を選びます。</small></li>
         <li>送信して、Claudeの返事が終わるまで待ちます（1〜2分）。</li>
       </ol>
-      <div class="cl-btns">
-        <a class="btn btn-black" href="https://claude.ai/new" target="_blank" rel="noopener">🌐 Claudeを開く</a>
-        <button class="btn btn-yellow" data-act="cl-copy-prompt">📋 指示文をコピー</button>
-      </div>
       <details class="cl-prompt"><summary>指示文の中身を見る</summary><pre>${esc(j.prompt)}</pre></details>
       <div class="cl-sheets">
         ${j.sheets.map((u, i) => `
@@ -1146,10 +1151,13 @@
           </figure>`).join("")}
       </div>
 
-      <h3 class="cl-h"><span>3</span>Claudeの返事を貼り付ける</h3>
-      <p class="hint">Claudeの返事を<b>全部</b>コピーして、ここに貼り付けてください（返事の下にあるコピーのボタンが便利です）。</p>
-      <textarea id="cl-reply" rows="6" placeholder="ここに Claude の返事を貼り付け"></textarea>
-      <button class="btn btn-xl btn-yellow vd-go" data-act="cl-build">✨ 下書きをつくる</button>`;
+      <h3 class="cl-h"><span>3</span>Claudeの返事を取り込む</h3>
+      <p class="hint">Claudeの返事が終わったら、返事の下の<b>コピーのボタン</b>を押してから、このアプリにもどって下のボタンを押します。</p>
+      <button class="btn btn-xl btn-yellow vd-go" data-act="cl-paste">② 返事を貼り付けて下書きをつくる</button>
+      <details class="cl-manual"><summary>うまくいかないとき（手で貼り付ける）</summary>
+        <textarea id="cl-reply" rows="6" placeholder="ここに Claude の返事を貼り付けると、そのまま下書きをつくります"></textarea>
+        <button class="btn btn-yellow" data-act="cl-build">✨ 下書きをつくる</button>
+      </details>`;
   }
 
   // 素材を選んだとき
@@ -1319,9 +1327,24 @@ ${office ? `\n事業所：${office}` : ""}${note.trim() ? `\n撮った職員か�
     return d;
   }
 
-  async function buildFromReply() {
+  // クリップボードの返事を読み取って、そのまま下書きをつくる
+  async function pasteReplyAndBuild() {
+    let text = "";
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) throw 0;
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      toast("貼り付けを許可できませんでした。下の「うまくいかないとき」の欄に貼り付けてください。", 5000);
+      const d = document.querySelector(".cl-manual"); if (d) d.open = true;
+      return;
+    }
+    if (!text.trim()) { toast("コピーした返事がありません。Claudeの返事の下のコピーボタンを押してから、もう一度お試しください。", 5000); return; }
+    await buildFromReply(text);
+  }
+
+  async function buildFromReply(replyText) {
     const j = cj.job;
-    const text = document.getElementById("cl-reply").value;
+    const text = typeof replyText === "string" ? replyText : document.getElementById("cl-reply").value;
     if (!text.trim()) { toast("Claudeの返事を貼り付けてください。"); return; }
     let d;
     try { d = parseReply(text); }
@@ -1342,6 +1365,15 @@ ${office ? `\n事業所：${office}` : ""}${note.trim() ? `\n撮った職員か�
       toast("下書きを作れませんでした。もう一度お試しください。", 4000);
     } finally { busy(false); }
   }
+
+  document.addEventListener("paste", (e) => {
+    const t = e.target;
+    if (!t || t.id !== "cl-reply") return;
+    const txt = (e.clipboardData && e.clipboardData.getData("text")) || "";
+    if (!txt.trim()) return;
+    e.preventDefault();
+    buildFromReply(txt);
+  });
 
   window.addEventListener("pagehide", () => { if (cur) saveNow(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden && cur) saveNow(); });
